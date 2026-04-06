@@ -132,6 +132,11 @@ struct TranspileContext {
     cse_bindings: HashMap<String, Ident>,
     /// Counter for generating unique CSE variable names.
     cse_counter: usize,
+    /// Inline `Noise` nodes with `y_scale == 0.0` found inside non-flat
+    /// functions. These are Y-independent but get recomputed per Y corner;
+    /// caching them in the column cache avoids ~48 redundant evaluations per
+    /// column. Keyed by fingerprint, value is `(index, noise_id, xz_scale)`.
+    inline_flat_noises: BTreeMap<String, (usize, String, f64)>,
 }
 
 impl TranspileContext {
@@ -154,6 +159,7 @@ impl TranspileContext {
             interpolated_refs: BTreeSet::new(),
             cse_bindings: HashMap::new(),
             cse_counter: 0,
+            inline_flat_noises: BTreeMap::new(),
         }
     }
 
@@ -212,6 +218,31 @@ impl TranspileContext {
                         .all(|dep| self.flat_cached.contains(dep)))
             {
                 self.flat_routers.insert(name.clone());
+            }
+        }
+
+        // Collect Y-independent inline Noise nodes inside non-flat functions.
+        // These get cached in the column cache to avoid per-Y-corner recomputation.
+        {
+            let mut seen = BTreeMap::new();
+            for name in &self.used_names {
+                if self.flat_cached.contains(name) {
+                    continue;
+                }
+                if let Some(df) = input.registry.get(name) {
+                    collect_inline_flat_noises(unwrap_markers(df), &mut seen);
+                }
+            }
+            for (name, df) in &input.router_entries {
+                if self.flat_routers.contains(name) {
+                    continue;
+                }
+                collect_inline_flat_noises(unwrap_markers(df), &mut seen);
+            }
+            for (fp, (noise_id, xz_scale)) in seen {
+                let idx = self.inline_flat_noises.len();
+                self.inline_flat_noises
+                    .insert(fp, (idx, noise_id, xz_scale));
             }
         }
 
@@ -631,6 +662,78 @@ impl TranspileContext {
             })
             .collect();
 
+        // Inline Y-independent noise cache
+        let inline_noise_fields: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let field = format_ident!("inline_noise_{}", idx);
+                quote! { pub #field: f64 }
+            })
+            .collect();
+
+        let inline_noise_grid_fields: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let field = format_ident!("grid_inline_noise_{}", idx);
+                quote! { #field: [f64; #grid_total_lit] }
+            })
+            .collect();
+
+        let inline_noise_ensure_stmts: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, noise_id, xz_scale)| {
+                let field = format_ident!("inline_noise_{}", idx);
+                let noise_field = noise_field_ident(noise_id);
+                let scale = Literal::f64_unsuffixed(*xz_scale);
+                quote! {
+                    self.#field = noises.#noise_field.get_value(
+                        f64::from(x) * #scale, 0.0, f64::from(z) * #scale,
+                    );
+                }
+            })
+            .collect();
+
+        let inline_noise_grid_load_stmts: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let active = format_ident!("inline_noise_{}", idx);
+                let grid = format_ident!("grid_inline_noise_{}", idx);
+                quote! { self.#active = self.#grid[idx]; }
+            })
+            .collect();
+
+        let inline_noise_grid_store_stmts: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let active = format_ident!("inline_noise_{}", idx);
+                let grid = format_ident!("grid_inline_noise_{}", idx);
+                quote! { self.#grid[idx] = self.#active; }
+            })
+            .collect();
+
+        let inline_noise_default_fields: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let field = format_ident!("inline_noise_{}", idx);
+                quote! { #field: 0.0 }
+            })
+            .collect();
+
+        let inline_noise_grid_default_fields: Vec<TokenStream> = self
+            .inline_flat_noises
+            .values()
+            .map(|(idx, _, _)| {
+                let field = format_ident!("grid_inline_noise_{}", idx);
+                quote! { #field: [0.0; #grid_total_lit] }
+            })
+            .collect();
+
         let noises = &self.noises_ident;
         let cache = &self.cache_ident;
         quote! {
@@ -660,9 +763,11 @@ impl TranspileContext {
                 // Active value fields (read by compute functions)
                 #(#cache_fields,)*
                 #(#router_fields,)*
+                #(#inline_noise_fields,)*
                 // Grid arrays (SoA layout, fixed-size per dimension)
                 #(#grid_fields,)*
-                #(#router_grid_fields),*
+                #(#router_grid_fields,)*
+                #(#inline_noise_grid_fields),*
             }
 
             impl #cache {
@@ -683,8 +788,10 @@ impl TranspileContext {
                         has_grid: false,
                         #(#default_fields,)*
                         #(#router_default_fields,)*
+                        #(#inline_noise_default_fields,)*
                         #(#grid_default_fields,)*
-                        #(#router_grid_default_fields),*
+                        #(#router_grid_default_fields,)*
+                        #(#inline_noise_grid_default_fields),*
                     }
                 }
 
@@ -714,6 +821,8 @@ impl TranspileContext {
                             #(#grid_store_stmts)*
                             #(#router_ensure_stmts)*
                             #(#router_grid_store_stmts)*
+                            #(#inline_noise_ensure_stmts)*
+                            #(#inline_noise_grid_store_stmts)*
                         }
                     }
                 }
@@ -746,6 +855,7 @@ impl TranspileContext {
                             let idx = (rel_z * Self::GRID_SIDE + rel_x) as usize;
                             #(#grid_load_stmts)*
                             #(#router_grid_load_stmts)*
+                            #(#inline_noise_grid_load_stmts)*
                             self.qx = eval_x;
                             self.qz = eval_z;
                             self.valid = true;
@@ -761,6 +871,7 @@ impl TranspileContext {
                         let z = z;
                         #(#ensure_stmts)*
                         #(#router_ensure_stmts)*
+                        #(#inline_noise_ensure_stmts)*
                         self.valid = true;
                         return;
                     }
@@ -777,6 +888,7 @@ impl TranspileContext {
                     let z = eval_z;
                     #(#ensure_stmts)*
                     #(#router_ensure_stmts)*
+                    #(#inline_noise_ensure_stmts)*
                     self.valid = true;
                 }
             }
@@ -1122,6 +1234,14 @@ impl TranspileContext {
             }
 
             DensityFunction::Noise(n) => {
+                // Y-independent noise inside a 3D function: read from column cache
+                if !is_flat && n.y_scale == 0.0 {
+                    let fp = fingerprint(df);
+                    if let Some((idx, _, _)) = self.inline_flat_noises.get(&fp) {
+                        let cache_field = format_ident!("inline_noise_{}", idx);
+                        return quote! { cache.#cache_field };
+                    }
+                }
                 let field = noise_field_ident(&n.noise_id);
                 let xz_scale = Literal::f64_unsuffixed(n.xz_scale);
                 let y_scale = Literal::f64_unsuffixed(n.y_scale);
@@ -1623,6 +1743,42 @@ fn collect_refs_inner(df: &DensityFunction, refs: &mut Vec<String>) {
         DensityFunction::FindTopSurface(fts) => {
             collect_refs_inner(&fts.density, refs);
             collect_refs_inner(&fts.upper_bound, refs);
+        }
+        _ => {}
+    }
+}
+
+/// Recursively collect `Noise` nodes with `y_scale == 0.0` in a density
+/// function tree. These are Y-independent computations that can be cached
+/// per (x, z) column. Keyed by fingerprint → `(noise_id, xz_scale)`.
+fn collect_inline_flat_noises(df: &DensityFunction, out: &mut BTreeMap<String, (String, f64)>) {
+    if let DensityFunction::Noise(n) = df {
+        if n.y_scale == 0.0 {
+            let fp = fingerprint(df);
+            out.entry(fp)
+                .or_insert_with(|| (n.noise_id.clone(), n.xz_scale));
+        }
+    }
+    // Recurse into children (but NOT into References — those are separate functions)
+    match df {
+        DensityFunction::TwoArgumentSimple(t) => {
+            collect_inline_flat_noises(&t.argument1, out);
+            collect_inline_flat_noises(&t.argument2, out);
+        }
+        DensityFunction::Mapped(m) => collect_inline_flat_noises(&m.input, out),
+        DensityFunction::Clamp(c) => collect_inline_flat_noises(&c.input, out),
+        DensityFunction::RangeChoice(rc) => {
+            collect_inline_flat_noises(&rc.input, out);
+            collect_inline_flat_noises(&rc.when_in_range, out);
+            collect_inline_flat_noises(&rc.when_out_of_range, out);
+        }
+        DensityFunction::WeirdScaledSampler(ws) => collect_inline_flat_noises(&ws.input, out),
+        DensityFunction::BlendDensity(bd) => collect_inline_flat_noises(&bd.input, out),
+        DensityFunction::Marker(m) => collect_inline_flat_noises(&m.wrapped, out),
+        DensityFunction::ShiftedNoise(sn) => {
+            collect_inline_flat_noises(&sn.shift_x, out);
+            collect_inline_flat_noises(&sn.shift_y, out);
+            collect_inline_flat_noises(&sn.shift_z, out);
         }
         _ => {}
     }
