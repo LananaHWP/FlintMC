@@ -165,12 +165,7 @@ pub trait DimensionNoises: Sized + Send + Sync {
     /// to SIMD-batch the blended noise computation.
     ///
     /// Default: no-op.
-    fn precompute_noise_column(
-        &self,
-        _x: i32,
-        _block_ys: &[i32],
-        _z: i32,
-    ) {}
+    fn precompute_noise_column(&self, _x: i32, _block_ys: &[i32], _z: i32) {}
 
     /// Evaluate the inner functions of all `Interpolated` markers at a cell corner.
     ///

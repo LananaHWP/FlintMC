@@ -218,8 +218,8 @@ impl BlendedNoise {
         }
 
         // Blend factor per lane: midpoint(main/10, 1) = (main/10 + 1) / 2
-        let factors = (main_noise_values / f64x4::splat(10.0) + f64x4::splat(1.0))
-            / f64x4::splat(2.0);
+        let factors =
+            (main_noise_values / f64x4::splat(10.0) + f64x4::splat(1.0)) / f64x4::splat(2.0);
 
         // Early exit: skip a limit noise only when ALL 4 lanes agree
         let all_max = factors.simd_ge(f64x4::splat(1.0)).all();
@@ -239,17 +239,15 @@ impl BlendedNoise {
 
             if !all_max {
                 if let Some(noise) = self.min_limit_noise.get_octave_noise(i) {
-                    blend_min += noise.noise_with_y_scale_4x(
-                        wx, wys, wz, y_scale_pow, scaled_ys,
-                    ) / pow_v;
+                    blend_min +=
+                        noise.noise_with_y_scale_4x(wx, wys, wz, y_scale_pow, scaled_ys) / pow_v;
                 }
             }
 
             if !all_min {
                 if let Some(noise) = self.max_limit_noise.get_octave_noise(i) {
-                    blend_max += noise.noise_with_y_scale_4x(
-                        wx, wys, wz, y_scale_pow, scaled_ys,
-                    ) / pow_v;
+                    blend_max +=
+                        noise.noise_with_y_scale_4x(wx, wys, wz, y_scale_pow, scaled_ys) / pow_v;
                 }
             }
 

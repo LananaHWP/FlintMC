@@ -17,7 +17,7 @@
 //!
 //! Gated behind the `codegen` feature flag.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::mem;
 use std::sync::Arc;
 
@@ -125,11 +125,13 @@ struct TranspileContext {
     /// Named functions that (transitively) contain `Interpolated` markers.
     /// In param mode, these are inlined instead of called as functions.
     interpolated_refs: BTreeSet<String>,
-    /// CSE bindings: when a `RangeChoice` input is a named reference, the
-    /// computed `let v = ...` variable is registered here so that the same
-    /// reference inside `when_in_range`/`when_out_of_range` emits `v` instead
-    /// of a redundant function call.
-    range_choice_bindings: BTreeMap<String, Ident>,
+    /// CSE bindings keyed by structural fingerprint. When a subexpression has
+    /// been hoisted into a `let` binding, subsequent occurrences emit the
+    /// variable name instead of recomputing. Covers `Reference`, `Noise`,
+    /// `ShiftedNoise`, and other expensive nodes.
+    cse_bindings: HashMap<String, Ident>,
+    /// Counter for generating unique CSE variable names.
+    cse_counter: usize,
 }
 
 impl TranspileContext {
@@ -150,7 +152,8 @@ impl TranspileContext {
             interpolated_param_mode: false,
             interpolated_param_counter: 0,
             interpolated_refs: BTreeSet::new(),
-            range_choice_bindings: BTreeMap::new(),
+            cse_bindings: HashMap::new(),
+            cse_counter: 0,
         }
     }
 
@@ -1095,6 +1098,15 @@ impl TranspileContext {
         input: &TranspilerInput,
         is_flat: bool,
     ) -> TokenStream {
+        // Unified CSE: if this node was hoisted by an enclosing scope, emit
+        // the variable instead of recomputing.
+        if is_cse_candidate(df) {
+            let fp = fingerprint(df);
+            if let Some(var) = self.cse_bindings.get(&fp) {
+                return quote! { #var };
+            }
+        }
+
         match df {
             DensityFunction::Constant(c) => {
                 let val = Literal::f64_unsuffixed(c.value);
@@ -1172,13 +1184,34 @@ impl TranspileContext {
             }
 
             DensityFunction::TwoArgumentSimple(t) => {
+                let (hoisted, hoisted_fps) =
+                    self.hoist_common_subexprs(&[&t.argument1, &t.argument2], input, is_flat);
+
                 let a = self.gen_expr(&t.argument1, input, is_flat);
                 let b = self.gen_expr(&t.argument2, input, is_flat);
-                match t.op {
-                    TwoArgType::Add => quote! { ((#a) + (#b)) },
-                    TwoArgType::Mul => quote! { ((#a) * (#b)) },
-                    TwoArgType::Min => quote! { f64::min(#a, #b) },
-                    TwoArgType::Max => quote! { f64::max(#a, #b) },
+
+                for fp in &hoisted_fps {
+                    self.cse_bindings.remove(fp);
+                }
+
+                if hoisted.is_empty() {
+                    match t.op {
+                        TwoArgType::Add => quote! { ((#a) + (#b)) },
+                        TwoArgType::Mul => quote! { ((#a) * (#b)) },
+                        TwoArgType::Min => quote! { f64::min(#a, #b) },
+                        TwoArgType::Max => quote! { f64::max(#a, #b) },
+                    }
+                } else {
+                    let op = match t.op {
+                        TwoArgType::Add => quote! { ((#a) + (#b)) },
+                        TwoArgType::Mul => quote! { ((#a) * (#b)) },
+                        TwoArgType::Min => quote! { f64::min(#a, #b) },
+                        TwoArgType::Max => quote! { f64::max(#a, #b) },
+                    };
+                    quote! {{
+                        #(#hoisted)*
+                        #op
+                    }}
                 }
             }
 
@@ -1217,56 +1250,36 @@ impl TranspileContext {
                 // `let v = v;`).
                 let input_expr = self.gen_expr(&rc.input, input, is_flat);
 
-                // CSE: if input is a named reference, register a binding so
-                // the same reference inside the branches emits `v` instead
-                // of a redundant function call.
-                let cse_id = match rc.input.as_ref() {
-                    DensityFunction::Reference(r) => Some(r.id.clone()),
-                    _ => None,
+                // CSE: if input is a CSE candidate, register `v` so the same
+                // subexpression inside the branches reuses the binding.
+                let input_fp = if is_cse_candidate(&rc.input) {
+                    let fp = fingerprint(&rc.input);
+                    self.cse_bindings.insert(fp.clone(), format_ident!("v"));
+                    Some(fp)
+                } else {
+                    None
                 };
-                if let Some(ref id) = cse_id {
-                    self.range_choice_bindings
-                        .insert(id.clone(), format_ident!("v"));
-                }
 
-                // CSE: hoist references that appear in BOTH branches before
-                // the if/else so they're computed once instead of in each branch.
-                let in_refs: BTreeSet<String> =
-                    collect_references(&rc.when_in_range).into_iter().collect();
-                let out_refs: BTreeSet<String> =
-                    collect_references(&rc.when_out_of_range).into_iter().collect();
-                let mut hoisted_bindings = Vec::new();
-                let mut hoisted_ids = Vec::new();
-                for common_id in in_refs.intersection(&out_refs) {
-                    // Skip flat-cached or already-bound references
-                    if self.flat_cached.contains(common_id)
-                        || self.range_choice_bindings.contains_key(common_id)
-                    {
-                        continue;
-                    }
-                    let var = format_ident!("__cse_{}", sanitize_name(common_id));
-                    let fn_name = named_fn_ident(common_id);
-                    hoisted_bindings.push(quote! {
-                        let #var = #fn_name(noises, cache, x, y, z);
-                    });
-                    self.range_choice_bindings
-                        .insert(common_id.clone(), var);
-                    hoisted_ids.push(common_id.clone());
-                }
+                // CSE: hoist subexpressions common to both branches.
+                let (hoisted, hoisted_fps) = self.hoist_common_subexprs(
+                    &[&rc.when_in_range, &rc.when_out_of_range],
+                    input,
+                    is_flat,
+                );
 
                 let in_range = self.gen_expr(&rc.when_in_range, input, is_flat);
                 let out_range = self.gen_expr(&rc.when_out_of_range, input, is_flat);
 
                 // Clean up all CSE bindings
-                if let Some(ref id) = cse_id {
-                    self.range_choice_bindings.remove(id);
+                if let Some(ref fp) = input_fp {
+                    self.cse_bindings.remove(fp);
                 }
-                for id in &hoisted_ids {
-                    self.range_choice_bindings.remove(id);
+                for fp in &hoisted_fps {
+                    self.cse_bindings.remove(fp);
                 }
 
                 quote! {{
-                    #(#hoisted_bindings)*
+                    #(#hoisted)*
                     let v = #input_expr;
                     if v >= #min && v < #max { #in_range } else { #out_range }
                 }}
@@ -1344,11 +1357,10 @@ impl TranspileContext {
             }
 
             DensityFunction::Reference(r) => {
-                // CSE: if this reference was bound by an enclosing RangeChoice,
-                // emit the variable name instead of a redundant function call.
-                if let Some(var) = self.range_choice_bindings.get(&r.id) {
-                    quote! { #var }
-                } else if self.interpolated_param_mode && self.interpolated_refs.contains(&r.id) {
+                // Note: the unified CSE check at the top of gen_expr handles
+                // Reference nodes too, so we only reach here if there's no
+                // active CSE binding for this reference.
+                if self.interpolated_param_mode && self.interpolated_refs.contains(&r.id) {
                     // In param mode, inline references that contain Interpolated markers
                     // so that the markers within are replaced with interpolated[i].
                     if let Some(ref_df) = input.registry.get(&r.id) {
@@ -1453,6 +1465,64 @@ impl TranspileContext {
 
         fn_name
     }
+
+    /// Find subexpressions common to all `branches` and hoist them into `let`
+    /// bindings. Returns the bindings (as `TokenStream`s) and the fingerprints
+    /// that were registered (caller must clean them up after generating the
+    /// branch expressions).
+    fn hoist_common_subexprs(
+        &mut self,
+        branches: &[&Arc<DensityFunction>],
+        input: &TranspilerInput,
+        is_flat: bool,
+    ) -> (Vec<TokenStream>, Vec<String>) {
+        if branches.len() < 2 {
+            return (Vec::new(), Vec::new());
+        }
+
+        // In interpolated param mode, references get inlined and Interpolated
+        // markers rewritten to `interpolated[i]`, which can make hoisted
+        // bindings dead code. Skip CSE in that mode.
+        if self.interpolated_param_mode {
+            return (Vec::new(), Vec::new());
+        }
+
+        // Collect expensive subexprs from each branch
+        let branch_exprs: Vec<HashMap<String, DensityFunction>> = branches
+            .iter()
+            .map(|b| collect_expensive_subexprs(b))
+            .collect();
+
+        // Find fingerprints present in ALL branches
+        let common_fps: BTreeSet<String> = branch_exprs[0]
+            .keys()
+            .filter(|fp| branch_exprs[1..].iter().all(|m| m.contains_key(*fp)))
+            .cloned()
+            .collect();
+
+        let mut bindings = Vec::new();
+        let mut hoisted_fps = Vec::new();
+        for fp in common_fps {
+            if self.cse_bindings.contains_key(&fp) {
+                continue;
+            }
+            let df = &branch_exprs[0][&fp];
+            // Skip flat-cached references — they're already cheap cache reads
+            if let DensityFunction::Reference(r) = df {
+                if self.flat_cached.contains(&r.id) {
+                    continue;
+                }
+            }
+            let var = format_ident!("__cse_{}", self.cse_counter);
+            self.cse_counter += 1;
+            let expr = self.gen_expr(df, input, is_flat);
+            bindings.push(quote! { let #var = #expr; });
+            self.cse_bindings.insert(fp.clone(), var);
+            hoisted_fps.push(fp);
+        }
+
+        (bindings, hoisted_fps)
+    }
 }
 
 // ── Helper functions ────────────────────────────────────────────────────────
@@ -1554,6 +1624,48 @@ fn collect_refs_inner(df: &DensityFunction, refs: &mut Vec<String>) {
             collect_refs_inner(&fts.density, refs);
             collect_refs_inner(&fts.upper_bound, refs);
         }
+        _ => {}
+    }
+}
+
+/// Whether a node is a CSE candidate (worth deduplicating).
+fn is_cse_candidate(df: &DensityFunction) -> bool {
+    matches!(
+        df,
+        DensityFunction::Reference(_)
+            | DensityFunction::Noise(_)
+            | DensityFunction::ShiftedNoise(_)
+    )
+}
+
+/// Collect CSE-candidate subexpressions with their fingerprints.
+fn collect_expensive_subexprs(df: &DensityFunction) -> HashMap<String, DensityFunction> {
+    let mut result = HashMap::new();
+    collect_expensive_inner(df, &mut result);
+    result
+}
+
+fn collect_expensive_inner(df: &DensityFunction, out: &mut HashMap<String, DensityFunction>) {
+    if is_cse_candidate(df) {
+        let fp = fingerprint(df);
+        out.entry(fp).or_insert_with(|| df.clone());
+    }
+    // Recurse into children
+    match df {
+        DensityFunction::TwoArgumentSimple(t) => {
+            collect_expensive_inner(&t.argument1, out);
+            collect_expensive_inner(&t.argument2, out);
+        }
+        DensityFunction::Mapped(m) => collect_expensive_inner(&m.input, out),
+        DensityFunction::Clamp(c) => collect_expensive_inner(&c.input, out),
+        DensityFunction::RangeChoice(rc) => {
+            collect_expensive_inner(&rc.input, out);
+            collect_expensive_inner(&rc.when_in_range, out);
+            collect_expensive_inner(&rc.when_out_of_range, out);
+        }
+        DensityFunction::WeirdScaledSampler(ws) => collect_expensive_inner(&ws.input, out),
+        DensityFunction::BlendDensity(bd) => collect_expensive_inner(&bd.input, out),
+        DensityFunction::Marker(m) => collect_expensive_inner(&m.wrapped, out),
         _ => {}
     }
 }
@@ -1747,4 +1859,110 @@ fn sanitize_name(id: &str) -> String {
         None => id,
     };
     path.replace('/', "__").replace('-', "_")
+}
+
+/// Produce a canonical string fingerprint for a `DensityFunction` subtree.
+///
+/// Two structurally identical subtrees produce the same fingerprint. Used to
+/// detect common subexpressions across sibling branches (e.g., both arguments
+/// of a `Max` or `Min`).
+fn fingerprint(df: &DensityFunction) -> String {
+    let mut out = String::new();
+    fingerprint_inner(df, &mut out);
+    out
+}
+
+fn fingerprint_inner(df: &DensityFunction, out: &mut String) {
+    use std::fmt::Write;
+    match df {
+        DensityFunction::Constant(c) => write!(out, "const({:?})", c.value).unwrap(),
+        DensityFunction::Reference(r) => write!(out, "ref({})", r.id).unwrap(),
+        DensityFunction::YClampedGradient(g) => {
+            write!(
+                out,
+                "yclamp({},{},{},{})",
+                g.from_y, g.to_y, g.from_value, g.to_value
+            )
+            .unwrap();
+        }
+        DensityFunction::Noise(n) => {
+            write!(
+                out,
+                "noise({},{:?},{:?})",
+                n.noise_id, n.xz_scale, n.y_scale
+            )
+            .unwrap();
+        }
+        DensityFunction::ShiftedNoise(sn) => {
+            out.push_str("shifted_noise(");
+            fingerprint_inner(&sn.shift_x, out);
+            out.push(',');
+            fingerprint_inner(&sn.shift_y, out);
+            out.push(',');
+            fingerprint_inner(&sn.shift_z, out);
+            write!(out, ",{},{},{})", sn.xz_scale, sn.y_scale, sn.noise_id).unwrap();
+        }
+        DensityFunction::ShiftA(s) => write!(out, "shift_a({})", s.noise_id).unwrap(),
+        DensityFunction::ShiftB(s) => write!(out, "shift_b({})", s.noise_id).unwrap(),
+        DensityFunction::Shift(s) => write!(out, "shift({})", s.noise_id).unwrap(),
+        DensityFunction::TwoArgumentSimple(t) => {
+            let op = match t.op {
+                TwoArgType::Add => "add",
+                TwoArgType::Mul => "mul",
+                TwoArgType::Min => "min",
+                TwoArgType::Max => "max",
+            };
+            write!(out, "{op}(").unwrap();
+            fingerprint_inner(&t.argument1, out);
+            out.push(',');
+            fingerprint_inner(&t.argument2, out);
+            out.push(')');
+        }
+        DensityFunction::Mapped(m) => {
+            write!(out, "map({:?},", m.op).unwrap();
+            fingerprint_inner(&m.input, out);
+            out.push(')');
+        }
+        DensityFunction::Clamp(c) => {
+            write!(out, "clamp({:?},{:?},", c.min, c.max).unwrap();
+            fingerprint_inner(&c.input, out);
+            out.push(')');
+        }
+        DensityFunction::RangeChoice(rc) => {
+            write!(out, "range({:?},{:?},", rc.min_inclusive, rc.max_exclusive).unwrap();
+            fingerprint_inner(&rc.input, out);
+            out.push(',');
+            fingerprint_inner(&rc.when_in_range, out);
+            out.push(',');
+            fingerprint_inner(&rc.when_out_of_range, out);
+            out.push(')');
+        }
+        DensityFunction::WeirdScaledSampler(ws) => {
+            write!(out, "weird({:?},{},", ws.rarity_value_mapper, ws.noise_id).unwrap();
+            fingerprint_inner(&ws.input, out);
+            out.push(')');
+        }
+        DensityFunction::Spline(_) => out.push_str("spline(...)"),
+        DensityFunction::BlendedNoise(_) => out.push_str("blended"),
+        DensityFunction::EndIslands => out.push_str("end_islands"),
+        DensityFunction::BlendAlpha(_) => out.push_str("blend_alpha"),
+        DensityFunction::BlendOffset(_) => out.push_str("blend_offset"),
+        DensityFunction::BlendDensity(bd) => {
+            out.push_str("blend_density(");
+            fingerprint_inner(&bd.input, out);
+            out.push(')');
+        }
+        DensityFunction::Marker(m) => {
+            write!(out, "marker({:?},", m.kind).unwrap();
+            fingerprint_inner(&m.wrapped, out);
+            out.push(')');
+        }
+        DensityFunction::FindTopSurface(fts) => {
+            out.push_str("find_top(");
+            fingerprint_inner(&fts.density, out);
+            out.push(',');
+            fingerprint_inner(&fts.upper_bound, out);
+            out.push(')');
+        }
+    }
 }

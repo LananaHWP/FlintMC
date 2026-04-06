@@ -529,9 +529,7 @@ mod tests {
                     );
 
                     for i in 0..4 {
-                        let scalar = noise.noise_with_y_scale(
-                            x, ys[i], z, y_scale, y_fudges[i],
-                        );
+                        let scalar = noise.noise_with_y_scale(x, ys[i], z, y_scale, y_fudges[i]);
                         let simd_val = simd_result[i];
                         assert!(
                             (scalar - simd_val).abs() < 1e-14,
