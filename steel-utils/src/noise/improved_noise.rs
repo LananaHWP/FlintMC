@@ -443,10 +443,7 @@ fn lerp2_4x(a1: f64x4, a2: f64x4, x00: f64x4, x10: f64x4, x01: f64x4, x11: f64x4
 }
 
 #[inline]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "mirrors lerp3 with SIMD vectors"
-)]
+#[expect(clippy::too_many_arguments, reason = "mirrors lerp3 with SIMD vectors")]
 fn lerp3_4x(
     a1: f64x4,
     a2: f64x4,

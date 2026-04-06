@@ -66,7 +66,10 @@ impl<N: DimensionNoises> NoiseChunk<N> {
     /// `chunk_min_block_x` and `chunk_min_block_z` are the world-space block
     /// coordinates of the chunk's northwest corner.
     #[must_use]
-    #[expect(clippy::missing_panics_doc, reason = "panic is a compile-time constant check")]
+    #[expect(
+        clippy::missing_panics_doc,
+        reason = "panic is a compile-time constant check"
+    )]
     pub fn new(chunk_min_block_x: i32, chunk_min_block_z: i32) -> Self {
         let cell_width = N::Settings::CELL_WIDTH;
         let cell_height = N::Settings::CELL_HEIGHT;

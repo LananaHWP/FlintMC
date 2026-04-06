@@ -18,10 +18,11 @@
 //! Gated behind the `codegen` feature flag.
 
 use std::collections::{BTreeMap, BTreeSet};
-
-use rustc_hash::FxHashMap;
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
+
+use rustc_hash::{FxHashMap, FxHasher};
 
 use proc_macro2::{Ident, Literal, TokenStream};
 use quote::{format_ident, quote};
@@ -127,18 +128,18 @@ struct TranspileContext {
     /// Named functions that (transitively) contain `Interpolated` markers.
     /// In param mode, these are inlined instead of called as functions.
     interpolated_refs: BTreeSet<String>,
-    /// CSE bindings keyed by structural fingerprint. When a subexpression has
-    /// been hoisted into a `let` binding, subsequent occurrences emit the
-    /// variable name instead of recomputing. Covers `Reference`, `Noise`,
+    /// CSE bindings keyed by structural hash. When a subexpression has been
+    /// hoisted into a `let` binding, subsequent occurrences emit the variable
+    /// name instead of recomputing. Covers `Reference`, `Noise`,
     /// `ShiftedNoise`, and other expensive nodes.
-    cse_bindings: FxHashMap<String, Ident>,
+    cse_bindings: FxHashMap<u64, Ident>,
     /// Counter for generating unique CSE variable names.
     cse_counter: usize,
     /// Inline `Noise` nodes with `y_scale == 0.0` found inside non-flat
     /// functions. These are Y-independent but get recomputed per Y corner;
     /// caching them in the column cache avoids ~48 redundant evaluations per
-    /// column. Keyed by fingerprint, value is `(index, noise_id, xz_scale)`.
-    inline_flat_noises: BTreeMap<String, (usize, String, f64)>,
+    /// column. Keyed by structural hash, value is `(index, noise_id, xz_scale)`.
+    inline_flat_noises: BTreeMap<u64, (usize, String, f64)>,
 }
 
 impl TranspileContext {
@@ -1376,7 +1377,7 @@ impl TranspileContext {
                 // subexpression inside the branches reuses the binding.
                 let input_fp = if is_cse_candidate(&rc.input) {
                     let fp = fingerprint(&rc.input);
-                    self.cse_bindings.insert(fp.clone(), format_ident!("v"));
+                    self.cse_bindings.insert(fp, format_ident!("v"));
                     Some(fp)
                 } else {
                     None
@@ -1597,7 +1598,7 @@ impl TranspileContext {
         branches: &[&Arc<DensityFunction>],
         input: &TranspilerInput,
         is_flat: bool,
-    ) -> (Vec<TokenStream>, Vec<String>) {
+    ) -> (Vec<TokenStream>, Vec<u64>) {
         if branches.len() < 2 {
             return (Vec::new(), Vec::new());
         }
@@ -1610,16 +1611,16 @@ impl TranspileContext {
         }
 
         // Collect expensive subexprs from each branch
-        let branch_exprs: Vec<FxHashMap<String, DensityFunction>> = branches
+        let branch_exprs: Vec<FxHashMap<u64, DensityFunction>> = branches
             .iter()
             .map(|b| collect_expensive_subexprs(b))
             .collect();
 
-        // Find fingerprints present in ALL branches
-        let common_fps: BTreeSet<String> = branch_exprs[0]
+        // Find hashes present in ALL branches
+        let common_fps: BTreeSet<u64> = branch_exprs[0]
             .keys()
             .filter(|fp| branch_exprs[1..].iter().all(|m| m.contains_key(*fp)))
-            .cloned()
+            .copied()
             .collect();
 
         let mut bindings = Vec::new();
@@ -1631,14 +1632,15 @@ impl TranspileContext {
             let df = &branch_exprs[0][&fp];
             // Skip flat-cached references — they're already cheap cache reads
             if let DensityFunction::Reference(r) = df
-                && self.flat_cached.contains(&r.id) {
-                    continue;
-                }
+                && self.flat_cached.contains(&r.id)
+            {
+                continue;
+            }
             let var = format_ident!("__cse_{}", self.cse_counter);
             self.cse_counter += 1;
             let expr = self.gen_expr(df, input, is_flat);
             bindings.push(quote! { let #var = #expr; });
-            self.cse_bindings.insert(fp.clone(), var);
+            self.cse_bindings.insert(fp, var);
             hoisted_fps.push(fp);
         }
 
@@ -1751,14 +1753,15 @@ fn collect_refs_inner(df: &DensityFunction, refs: &mut Vec<String>) {
 
 /// Recursively collect `Noise` nodes with `y_scale == 0.0` in a density
 /// function tree. These are Y-independent computations that can be cached
-/// per (x, z) column. Keyed by fingerprint → `(noise_id, xz_scale)`.
-fn collect_inline_flat_noises(df: &DensityFunction, out: &mut BTreeMap<String, (String, f64)>) {
+/// per (x, z) column. Keyed by structural hash → `(noise_id, xz_scale)`.
+fn collect_inline_flat_noises(df: &DensityFunction, out: &mut BTreeMap<u64, (String, f64)>) {
     if let DensityFunction::Noise(n) = df
-        && n.y_scale == 0.0 {
-            let fp = fingerprint(df);
-            out.entry(fp)
-                .or_insert_with(|| (n.noise_id.clone(), n.xz_scale));
-        }
+        && n.y_scale == 0.0
+    {
+        let fp = fingerprint(df);
+        out.entry(fp)
+            .or_insert_with(|| (n.noise_id.clone(), n.xz_scale));
+    }
     // Recurse into children (but NOT into References — those are separate functions)
     match df {
         DensityFunction::TwoArgumentSimple(t) => {
@@ -1794,14 +1797,14 @@ const fn is_cse_candidate(df: &DensityFunction) -> bool {
     )
 }
 
-/// Collect CSE-candidate subexpressions with their fingerprints.
-fn collect_expensive_subexprs(df: &DensityFunction) -> FxHashMap<String, DensityFunction> {
+/// Collect CSE-candidate subexpressions with their structural hashes.
+fn collect_expensive_subexprs(df: &DensityFunction) -> FxHashMap<u64, DensityFunction> {
     let mut result = FxHashMap::default();
     collect_expensive_inner(df, &mut result);
     result
 }
 
-fn collect_expensive_inner(df: &DensityFunction, out: &mut FxHashMap<String, DensityFunction>) {
+fn collect_expensive_inner(df: &DensityFunction, out: &mut FxHashMap<u64, DensityFunction>) {
     if is_cse_candidate(df) {
         let fp = fingerprint(df);
         out.entry(fp).or_insert_with(|| df.clone());
@@ -2017,109 +2020,86 @@ fn sanitize_name(id: &str) -> String {
     path.replace('/', "__").replace('-', "_")
 }
 
-/// Produce a canonical string fingerprint for a `DensityFunction` subtree.
+/// Produce a structural hash for a `DensityFunction` subtree.
 ///
-/// Two structurally identical subtrees produce the same fingerprint. Used to
-/// detect common subexpressions across sibling branches (e.g., both arguments
-/// of a `Max` or `Min`).
-fn fingerprint(df: &DensityFunction) -> String {
-    let mut out = String::new();
-    fingerprint_inner(df, &mut out);
-    out
+/// Two structurally identical subtrees produce the same hash. Used to detect
+/// common subexpressions across sibling branches (e.g., both arguments of a
+/// `Max` or `Min`).
+fn fingerprint(df: &DensityFunction) -> u64 {
+    let mut hasher = FxHasher::default();
+    hash_df(df, &mut hasher);
+    hasher.finish()
 }
 
-#[expect(clippy::unwrap_used, reason = "write! to String is infallible")]
-fn fingerprint_inner(df: &DensityFunction, out: &mut String) {
-    use std::fmt::Write;
+/// Hash a `DensityFunction` tree into the given hasher. Each variant is
+/// discriminated by a unique tag byte so structurally different trees never
+/// collide (within the limits of the hash).
+fn hash_df(df: &DensityFunction, h: &mut impl Hasher) {
+    mem::discriminant(df).hash(h);
     match df {
-        DensityFunction::Constant(c) => write!(out, "const({:?})", c.value).unwrap(),
-        DensityFunction::Reference(r) => write!(out, "ref({})", r.id).unwrap(),
+        DensityFunction::Constant(c) => c.value.to_bits().hash(h),
+        DensityFunction::Reference(r) => r.id.hash(h),
         DensityFunction::YClampedGradient(g) => {
-            write!(
-                out,
-                "yclamp({},{},{},{})",
-                g.from_y, g.to_y, g.from_value, g.to_value
-            )
-            .unwrap();
+            g.from_y.hash(h);
+            g.to_y.hash(h);
+            g.from_value.to_bits().hash(h);
+            g.to_value.to_bits().hash(h);
         }
         DensityFunction::Noise(n) => {
-            write!(
-                out,
-                "noise({},{:?},{:?})",
-                n.noise_id, n.xz_scale, n.y_scale
-            )
-            .unwrap();
+            n.noise_id.hash(h);
+            n.xz_scale.to_bits().hash(h);
+            n.y_scale.to_bits().hash(h);
         }
         DensityFunction::ShiftedNoise(sn) => {
-            out.push_str("shifted_noise(");
-            fingerprint_inner(&sn.shift_x, out);
-            out.push(',');
-            fingerprint_inner(&sn.shift_y, out);
-            out.push(',');
-            fingerprint_inner(&sn.shift_z, out);
-            write!(out, ",{},{},{})", sn.xz_scale, sn.y_scale, sn.noise_id).unwrap();
+            hash_df(&sn.shift_x, h);
+            hash_df(&sn.shift_y, h);
+            hash_df(&sn.shift_z, h);
+            sn.xz_scale.to_bits().hash(h);
+            sn.y_scale.to_bits().hash(h);
+            sn.noise_id.hash(h);
         }
-        DensityFunction::ShiftA(s) => write!(out, "shift_a({})", s.noise_id).unwrap(),
-        DensityFunction::ShiftB(s) => write!(out, "shift_b({})", s.noise_id).unwrap(),
-        DensityFunction::Shift(s) => write!(out, "shift({})", s.noise_id).unwrap(),
+        DensityFunction::ShiftA(s) => s.noise_id.hash(h),
+        DensityFunction::ShiftB(s) => s.noise_id.hash(h),
+        DensityFunction::Shift(s) => s.noise_id.hash(h),
         DensityFunction::TwoArgumentSimple(t) => {
-            let op = match t.op {
-                TwoArgType::Add => "add",
-                TwoArgType::Mul => "mul",
-                TwoArgType::Min => "min",
-                TwoArgType::Max => "max",
-            };
-            write!(out, "{op}(").unwrap();
-            fingerprint_inner(&t.argument1, out);
-            out.push(',');
-            fingerprint_inner(&t.argument2, out);
-            out.push(')');
+            mem::discriminant(&t.op).hash(h);
+            hash_df(&t.argument1, h);
+            hash_df(&t.argument2, h);
         }
         DensityFunction::Mapped(m) => {
-            write!(out, "map({:?},", m.op).unwrap();
-            fingerprint_inner(&m.input, out);
-            out.push(')');
+            mem::discriminant(&m.op).hash(h);
+            hash_df(&m.input, h);
         }
         DensityFunction::Clamp(c) => {
-            write!(out, "clamp({:?},{:?},", c.min, c.max).unwrap();
-            fingerprint_inner(&c.input, out);
-            out.push(')');
+            c.min.to_bits().hash(h);
+            c.max.to_bits().hash(h);
+            hash_df(&c.input, h);
         }
         DensityFunction::RangeChoice(rc) => {
-            write!(out, "range({:?},{:?},", rc.min_inclusive, rc.max_exclusive).unwrap();
-            fingerprint_inner(&rc.input, out);
-            out.push(',');
-            fingerprint_inner(&rc.when_in_range, out);
-            out.push(',');
-            fingerprint_inner(&rc.when_out_of_range, out);
-            out.push(')');
+            rc.min_inclusive.to_bits().hash(h);
+            rc.max_exclusive.to_bits().hash(h);
+            hash_df(&rc.input, h);
+            hash_df(&rc.when_in_range, h);
+            hash_df(&rc.when_out_of_range, h);
         }
         DensityFunction::WeirdScaledSampler(ws) => {
-            write!(out, "weird({:?},{},", ws.rarity_value_mapper, ws.noise_id).unwrap();
-            fingerprint_inner(&ws.input, out);
-            out.push(')');
+            mem::discriminant(&ws.rarity_value_mapper).hash(h);
+            ws.noise_id.hash(h);
+            hash_df(&ws.input, h);
         }
-        DensityFunction::Spline(_) => out.push_str("spline(...)"),
-        DensityFunction::BlendedNoise(_) => out.push_str("blended"),
-        DensityFunction::EndIslands => out.push_str("end_islands"),
-        DensityFunction::BlendAlpha(_) => out.push_str("blend_alpha"),
-        DensityFunction::BlendOffset(_) => out.push_str("blend_offset"),
-        DensityFunction::BlendDensity(bd) => {
-            out.push_str("blend_density(");
-            fingerprint_inner(&bd.input, out);
-            out.push(')');
-        }
+        DensityFunction::Spline(_)
+        | DensityFunction::BlendedNoise(_)
+        | DensityFunction::EndIslands
+        | DensityFunction::BlendAlpha(_)
+        | DensityFunction::BlendOffset(_) => {}
+        DensityFunction::BlendDensity(bd) => hash_df(&bd.input, h),
         DensityFunction::Marker(m) => {
-            write!(out, "marker({:?},", m.kind).unwrap();
-            fingerprint_inner(&m.wrapped, out);
-            out.push(')');
+            mem::discriminant(&m.kind).hash(h);
+            hash_df(&m.wrapped, h);
         }
         DensityFunction::FindTopSurface(fts) => {
-            out.push_str("find_top(");
-            fingerprint_inner(&fts.density, out);
-            out.push(',');
-            fingerprint_inner(&fts.upper_bound, out);
-            out.push(')');
+            hash_df(&fts.density, h);
+            hash_df(&fts.upper_bound, h);
         }
     }
 }
