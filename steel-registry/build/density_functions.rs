@@ -878,6 +878,10 @@ fn generate_noise_settings(dimension: &str, prefix: &str) -> TokenStream {
                 VEIN_INTERP_ENABLED
             }
 
+            fn precompute_noise_column(&self, x: i32, block_ys: &[i32], z: i32) {
+                self.blended_noise.precompute_column(x, block_ys, z);
+            }
+
             #[inline]
             fn fill_cell_corner_densities(&self, cache: &mut Self::ColumnCache, x: i32, y: i32, z: i32, out: &mut [f64]) {
                 fill_cell_corner_densities(self, cache, x, y, z, out)

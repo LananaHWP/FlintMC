@@ -125,6 +125,11 @@ struct TranspileContext {
     /// Named functions that (transitively) contain `Interpolated` markers.
     /// In param mode, these are inlined instead of called as functions.
     interpolated_refs: BTreeSet<String>,
+    /// CSE bindings: when a `RangeChoice` input is a named reference, the
+    /// computed `let v = ...` variable is registered here so that the same
+    /// reference inside `when_in_range`/`when_out_of_range` emits `v` instead
+    /// of a redundant function call.
+    range_choice_bindings: BTreeMap<String, Ident>,
 }
 
 impl TranspileContext {
@@ -145,6 +150,7 @@ impl TranspileContext {
             interpolated_param_mode: false,
             interpolated_param_counter: 0,
             interpolated_refs: BTreeSet::new(),
+            range_choice_bindings: BTreeMap::new(),
         }
     }
 
@@ -1203,12 +1209,64 @@ impl TranspileContext {
             }
 
             DensityFunction::RangeChoice(rc) => {
-                let input_expr = self.gen_expr(&rc.input, input, is_flat);
-                let in_range = self.gen_expr(&rc.when_in_range, input, is_flat);
-                let out_range = self.gen_expr(&rc.when_out_of_range, input, is_flat);
                 let min = Literal::f64_unsuffixed(rc.min_inclusive);
                 let max = Literal::f64_unsuffixed(rc.max_exclusive);
+
+                // Generate input expression BEFORE registering any CSE
+                // bindings (otherwise a self-referencing input produces
+                // `let v = v;`).
+                let input_expr = self.gen_expr(&rc.input, input, is_flat);
+
+                // CSE: if input is a named reference, register a binding so
+                // the same reference inside the branches emits `v` instead
+                // of a redundant function call.
+                let cse_id = match rc.input.as_ref() {
+                    DensityFunction::Reference(r) => Some(r.id.clone()),
+                    _ => None,
+                };
+                if let Some(ref id) = cse_id {
+                    self.range_choice_bindings
+                        .insert(id.clone(), format_ident!("v"));
+                }
+
+                // CSE: hoist references that appear in BOTH branches before
+                // the if/else so they're computed once instead of in each branch.
+                let in_refs: BTreeSet<String> =
+                    collect_references(&rc.when_in_range).into_iter().collect();
+                let out_refs: BTreeSet<String> =
+                    collect_references(&rc.when_out_of_range).into_iter().collect();
+                let mut hoisted_bindings = Vec::new();
+                let mut hoisted_ids = Vec::new();
+                for common_id in in_refs.intersection(&out_refs) {
+                    // Skip flat-cached or already-bound references
+                    if self.flat_cached.contains(common_id)
+                        || self.range_choice_bindings.contains_key(common_id)
+                    {
+                        continue;
+                    }
+                    let var = format_ident!("__cse_{}", sanitize_name(common_id));
+                    let fn_name = named_fn_ident(common_id);
+                    hoisted_bindings.push(quote! {
+                        let #var = #fn_name(noises, cache, x, y, z);
+                    });
+                    self.range_choice_bindings
+                        .insert(common_id.clone(), var);
+                    hoisted_ids.push(common_id.clone());
+                }
+
+                let in_range = self.gen_expr(&rc.when_in_range, input, is_flat);
+                let out_range = self.gen_expr(&rc.when_out_of_range, input, is_flat);
+
+                // Clean up all CSE bindings
+                if let Some(ref id) = cse_id {
+                    self.range_choice_bindings.remove(id);
+                }
+                for id in &hoisted_ids {
+                    self.range_choice_bindings.remove(id);
+                }
+
                 quote! {{
+                    #(#hoisted_bindings)*
                     let v = #input_expr;
                     if v >= #min && v < #max { #in_range } else { #out_range }
                 }}
@@ -1286,7 +1344,11 @@ impl TranspileContext {
             }
 
             DensityFunction::Reference(r) => {
-                if self.interpolated_param_mode && self.interpolated_refs.contains(&r.id) {
+                // CSE: if this reference was bound by an enclosing RangeChoice,
+                // emit the variable name instead of a redundant function call.
+                if let Some(var) = self.range_choice_bindings.get(&r.id) {
+                    quote! { #var }
+                } else if self.interpolated_param_mode && self.interpolated_refs.contains(&r.id) {
                     // In param mode, inline references that contain Interpolated markers
                     // so that the markers within are replaced with interpolated[i].
                     if let Some(ref_df) = input.registry.get(&r.id) {
