@@ -125,15 +125,6 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 
 ## TODO (Not Yet Implemented)
 
-### Medium Priority
-- [ ] Stonecutter recipes
-- [ ] Smithing recipes (trim/transform)
-- [ ] Furnace/smoking/blasting recipes
-- [ ] Campfire cooking
-- [ ] Full ambient sounds
-- [ ] Particle type registry
-- [ ] Leaf decay
-
 ### Minor Priority
 - [ ] Mycelium/grass spread
 - [ ] Ice sliding physics
