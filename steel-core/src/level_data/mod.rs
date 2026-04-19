@@ -28,6 +28,9 @@ pub struct LevelData {
     pub day_time: i64,
     /// World spawn point.
     pub spawn: SpawnPoint,
+    /// World border settings.
+    #[serde(default)]
+    pub world_border: WorldBorder,
     /// Weather state.
     pub weather: WeatherState,
     /// World difficulty.
@@ -56,6 +59,56 @@ pub struct SpawnPoint {
     pub z: i32,
     /// Spawn angle (yaw).
     pub angle: f32,
+}
+
+/// World border settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorldBorder {
+    /// X coordinate of the center.
+    pub center_x: f64,
+    /// Z coordinate of the center.
+    pub center_z: f64,
+    /// Current border diameter.
+    pub size: f64,
+    /// Absolute maximum border diameter.
+    pub absolute_max_size: f64,
+    /// Warning time in seconds.
+    pub warning_time: i32,
+    /// Warning distance in blocks.
+    pub warning_blocks: i32,
+    /// Border size at the start of interpolation (for smooth transitions).
+    #[serde(default = "default_size")]
+    pub old_size: f64,
+    /// Ticks remaining in the current size transition.
+    #[serde(default)]
+    pub size_transition_ticks: i32,
+}
+
+fn default_size() -> f64 {
+    59_999_984.0
+}
+
+impl Default for WorldBorder {
+    fn default() -> Self {
+        Self::new(0.0, 0.0)
+    }
+}
+
+impl WorldBorder {
+    /// Creates new world border centered at the given position.
+    #[inline]
+    pub fn new(center_x: f64, center_z: f64) -> Self {
+        Self {
+            center_x,
+            center_z,
+            size: 59_999_984.0,
+            absolute_max_size: 59_999_984.0,
+            warning_time: 15,
+            warning_blocks: 5,
+            old_size: 59_999_984.0,
+            size_transition_ticks: 0,
+        }
+    }
 }
 
 impl Default for SpawnPoint {
@@ -99,6 +152,7 @@ impl LevelData {
             game_time: 0,
             day_time: 0,
             spawn: SpawnPoint::default(),
+            world_border: WorldBorder::default(),
             weather: WeatherState::default(),
             difficulty: Difficulty::default(),
             difficulty_locked: false,
@@ -138,6 +192,13 @@ impl LevelData {
         self.spawn.x = pos.x();
         self.spawn.y = pos.y();
         self.spawn.z = pos.z();
+    }
+
+    /// Gets the world border data.
+    #[inline]
+    #[must_use]
+    pub fn world_border(&self) -> &WorldBorder {
+        &self.world_border
     }
 }
 
@@ -332,5 +393,19 @@ impl LevelDataManager {
     pub const fn set_thundering(&mut self, thundering: bool) {
         self.data.weather.thundering = thundering;
         self.dirty = true;
+    }
+
+    /// Gets a reference to the world border data.
+    #[inline]
+    #[must_use]
+    pub const fn world_border(&self) -> &WorldBorder {
+        &self.data.world_border
+    }
+
+    /// Gets a mutable reference to the world border data.
+    #[inline]
+    pub fn world_border_mut(&mut self) -> &mut WorldBorder {
+        self.dirty = true;
+        &mut self.data.world_border
     }
 }

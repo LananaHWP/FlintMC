@@ -22,6 +22,7 @@ mod c_entity_position_sync;
 mod c_forget_level_chunk;
 mod c_game_event;
 mod c_hurt_animation;
+mod c_initialize_border;
 mod c_level_chunk_with_light;
 mod c_level_event;
 mod c_login;
@@ -112,6 +113,7 @@ pub use c_forget_level_chunk::CForgetLevelChunk;
 pub use c_game_event::CGameEvent;
 pub use c_game_event::GameEventType;
 pub use c_hurt_animation::CHurtAnimation;
+pub use c_initialize_border::CInitializeBorder;
 pub use c_level_chunk_with_light::{
     BlockEntityInfo, CLevelChunkWithLight, ChunkPacketData, HeightmapType, Heightmaps,
     LightUpdatePacketData,

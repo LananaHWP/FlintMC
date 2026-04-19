@@ -28,7 +28,7 @@
         level: 4,
     },
     // World generation settings
-    world_generator: "flat",
+    world_generator: "vanilla",
     world_storage_config: {
         "disk": {
             "path": "world"

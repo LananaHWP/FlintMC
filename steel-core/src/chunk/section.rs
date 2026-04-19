@@ -7,7 +7,7 @@ use steel_registry::vanilla_biomes;
 use steel_utils::{BlockStateId, locks::SyncRwLock, serial::WriteTo};
 
 use crate::behavior::{BLOCK_BEHAVIORS, BlockBehaviorRegistry};
-use crate::chunk::paletted_container::{BiomePalette, BlockPalette};
+use crate::chunk::paletted_container::{BiomePalette, BlockPalette, LightPalette};
 use crate::fluid::state::get_fluid_state_from_block;
 
 /// A wrapper around a chunk section.
@@ -201,6 +201,10 @@ pub struct ChunkSection {
     pub states: BlockPalette,
     /// The biomes in the section.
     pub biomes: BiomePalette,
+    /// Sky light data (15 = full sun, 0 = no light).
+    pub sky_light: LightPalette,
+    /// Block light data (from light-emitting blocks like torches).
+    pub block_light: LightPalette,
     /// Number of non-air blocks in this section (0-4096).
     /// Used to quickly check if a section is empty.
     non_empty_block_count: u16,
@@ -221,6 +225,8 @@ impl ChunkSection {
         Self {
             states,
             biomes,
+            sky_light: LightPalette::Homogeneous(15),
+            block_light: LightPalette::Homogeneous(0),
             non_empty_block_count: 0,
             fluid_count: 0,
             ticking_block_count: 0,
@@ -234,6 +240,8 @@ impl ChunkSection {
         Self {
             states: BlockPalette::Homogeneous(BlockStateId(0)),
             biomes: BiomePalette::Homogeneous(plains_id),
+            sky_light: LightPalette::Homogeneous(15),
+            block_light: LightPalette::Homogeneous(0),
             non_empty_block_count: 0,
             fluid_count: 0,
             ticking_block_count: 0,

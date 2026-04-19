@@ -29,6 +29,7 @@ use crate::{
     jukebox_song::JukeboxSongRegistry,
     loot_table::LootTableRegistry,
     menu_type::MenuTypeRegistry,
+    mob_effect::MobEffectRegistry,
     painting_variant::PaintingVariantRegistry,
     pig_sound_variant::PigSoundVariantRegistry,
     pig_variant::PigVariantRegistry,
@@ -72,6 +73,7 @@ pub mod items;
 pub mod jukebox_song;
 pub mod loot_table;
 pub mod menu_type;
+pub mod mob_effect;
 pub mod painting_variant;
 pub mod pig_sound_variant;
 pub mod pig_variant;
@@ -234,6 +236,11 @@ pub mod vanilla_dialog_tags;
 #[rustfmt::skip]
 #[path = "generated/vanilla_menu_types.rs"]
 pub mod vanilla_menu_types;
+
+#[expect(warnings)]
+#[rustfmt::skip]
+#[path = "generated/vanilla_mob_effects.rs"]
+pub mod vanilla_mob_effects;
 
 #[expect(warnings)]
 #[rustfmt::skip]
@@ -695,6 +702,7 @@ pub struct Registry {
     pub loot_tables: LootTableRegistry,
     pub block_entity_types: BlockEntityTypeRegistry,
     pub game_rules: GameRuleRegistry,
+    pub mob_effects: MobEffectRegistry,
     pub fluids: FluidRegistry,
     pub poi_types: PoiTypeRegistry,
     pub enchantments: EnchantmentRegistry,
@@ -760,6 +768,7 @@ impl Registry {
         vanilla_dialogs::register_dialogs(&mut registry.dialogs);
         vanilla_dialog_tags::register_dialog_tags(&mut registry.dialogs);
         vanilla_menu_types::register_menu_types(&mut registry.menu_types);
+        vanilla_mob_effects::register_mob_effects(&mut registry.mob_effects);
         vanilla_zombie_nautilus_variants::register_zombie_nautilus_variants(
             &mut registry.zombie_nautilus_variants,
         );
@@ -815,6 +824,7 @@ impl Registry {
         self.instruments.freeze();
         self.dialogs.freeze();
         self.menu_types.freeze();
+        self.mob_effects.freeze();
         self.zombie_nautilus_variants.freeze();
         self.timelines.freeze();
         self.recipes.freeze();
@@ -866,6 +876,7 @@ impl Registry {
             loot_tables: LootTableRegistry::new(),
             block_entity_types: BlockEntityTypeRegistry::new(),
             game_rules: GameRuleRegistry::new(),
+            mob_effects: MobEffectRegistry::new(),
             fluids: FluidRegistry::new(),
             world_clocks: WorldClockRegistry::new(),
             poi_types: PoiTypeRegistry::new(),

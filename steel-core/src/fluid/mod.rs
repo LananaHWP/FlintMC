@@ -8,7 +8,6 @@
 //! - TODO: Particle Events (underwater bubbles, lava pops, drip particles — needs `CLevelParticles` packet).
 //! - TODO: Entity Interactions (pushing, drowning, extinguishing, lava damage).
 //! - TODO: Block item drops when water destroys blocks (cactus infrastructure merged, needs implementation).
-//! - TODO: Lava random tick fire spread.
 pub mod collision;
 pub mod conversion;
 pub mod flowing_fluid;

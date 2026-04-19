@@ -143,22 +143,31 @@ impl ChunkStatusTasks {
         context.generator.build_surface(&chunk, &neighbor_biomes);
     }
 
-    // TODO: Wire up to context.generator.apply_carvers() once carver generation is implemented
     pub fn generate_carvers(
-        _context: Arc<WorldGenContext>,
+        context: Arc<WorldGenContext>,
         _step: &ChunkStep,
         _cache: &Arc<StaticCache2D<Arc<ChunkHolder>>>,
-        _holder: Arc<ChunkHolder>,
+        holder: Arc<ChunkHolder>,
     ) {
+        let chunk = holder
+            .try_chunk(ChunkStatus::Carvers)
+            .expect("Chunk not found at status Carvers");
+        
+        context.generator.apply_carvers(&chunk);
     }
 
     // TODO: Wire up to context.generator.apply_biome_decorations() once feature generation is implemented
     pub fn generate_features(
-        _context: Arc<WorldGenContext>,
+        context: Arc<WorldGenContext>,
         _step: &ChunkStep,
         _cache: &Arc<StaticCache2D<Arc<ChunkHolder>>>,
-        _holder: Arc<ChunkHolder>,
+        holder: Arc<ChunkHolder>,
     ) {
+        let chunk = holder
+            .try_chunk(ChunkStatus::Carvers)
+            .expect("Chunk not found at status Carvers");
+        
+        context.generator.apply_biome_decorations(&chunk);
     }
 
     pub fn initialize_light(

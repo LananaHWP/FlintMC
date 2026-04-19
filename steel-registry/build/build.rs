@@ -31,6 +31,7 @@ mod jukebox_songs;
 mod level_events;
 mod loot_tables;
 mod menu_types;
+mod mob_effects;
 mod packets;
 mod painting_variants;
 mod pig_sound_variants;
@@ -102,6 +103,7 @@ const INSTRUMENTS: &str = "instruments";
 const DIALOGS: &str = "dialogs";
 const DIALOG_TAGS: &str = "dialog_tags";
 const MENU_TYPES: &str = "menu_types";
+const MOB_EFFECTS: &str = "mob_effects";
 const TIMELINES: &str = "timelines";
 const TIMELINE_TAGS: &str = "timeline_tags";
 const ZOMBIE_NAUTILUS_VARIANTS: &str = "zombie_nautilus_variants";
@@ -169,6 +171,7 @@ pub fn main() {
         (dialogs::build(), DIALOGS),
         (dialog_tags::build(), DIALOG_TAGS),
         (menu_types::build(), MENU_TYPES),
+        (mob_effects::build(), MOB_EFFECTS),
         (timelines::build(), TIMELINES),
         (timeline_tags::build(), TIMELINE_TAGS),
         (zombie_nautilus_variants::build(), ZOMBIE_NAUTILUS_VARIANTS),

@@ -33,6 +33,9 @@ pub trait BlockStateExt {
     fn is_solid(&self) -> bool;
     /// Returns if a block can be replaced extracted from the minecraft data
     fn is_replaceable(&self) -> bool;
+
+    /// Checks if this block is water (stationary water or flowing water).
+    fn is_water(&self) -> bool;
 }
 
 impl BlockStateExt for BlockStateId {
@@ -114,6 +117,11 @@ impl BlockStateExt for BlockStateId {
 
     fn is_replaceable(&self) -> bool {
         self.get_block().config.replaceable
+    }
+
+    fn is_water(&self) -> bool {
+        let block = self.get_block();
+        block.config.liquid && block.key.path.contains("water")
     }
 }
 

@@ -8,6 +8,7 @@ mod container;
 mod decoration;
 mod farming;
 mod fluid;
+mod functional;
 mod portal;
 mod redstone;
 
@@ -21,5 +22,10 @@ pub use decoration::{
 };
 pub use farming::{CactusBlock, CactusFlowerBlock, CropBlock, FarmlandBlock};
 pub use fluid::LiquidBlock;
+pub use functional::{
+    AnvilBlock, BeaconBlock, BellBlock, BrewingStandBlock, CartographyTableBlock, ComparatorBlock,
+    CrafterBlock, FurnaceBlock, GrindstoneBlock, HopperBlock, JukeboxBlock, LoomBlock,
+    NoteBlock, RepeaterBlock, SmithingTableBlock, StonecutterBlock,
+};
 pub use portal::{EndPortalFrameBlock, FireBlock, NetherPortalBlock};
-pub use redstone::{ButtonBlock, RedstoneTorchBlock, RedstoneWallTorchBlock};
+pub use redstone::{ButtonBlock, LeverBlock, RedstoneTorchBlock, RedstoneWallTorchBlock, RedStoneWireBlock};

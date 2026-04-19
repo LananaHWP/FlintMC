@@ -17,6 +17,7 @@ use crate::entity::{SharedEntity, init_entities};
 use crate::player::Player;
 use crate::player::chunk_sender::ChunkSender;
 use crate::player::connection::NetworkConnection;
+use crate::permissions::PermissionManager;
 use crate::player::player_data_storage::PlayerDataStorage;
 use crate::portal::DimensionChangeRequest;
 use crate::server::registry_cache::RegistryCache;
@@ -74,6 +75,8 @@ pub struct Server {
     pub player_data_storage: PlayerDataStorage,
     /// Queued dimension changes to process after the tick.
     pub pending_dimension_changes: SyncMutex<Vec<(SharedEntity, DimensionChangeRequest)>>,
+    /// Permission manager for operators.
+    pub permissions: SyncRwLock<PermissionManager>,
 }
 
 impl Server {
@@ -170,6 +173,7 @@ impl Server {
             command_dispatcher: SyncRwLock::new(CommandDispatcher::new()),
             player_data_storage,
             pending_dimension_changes: SyncMutex::new(vec![]),
+            permissions: SyncRwLock::new(PermissionManager::load("config")),
         }
     }
 
@@ -179,6 +183,11 @@ impl Server {
     /// Panics if the registry is not initialized.
     pub async fn add_player(&self, player: Arc<Player>) {
         use crate::player::ResetReason;
+
+        // Load permission level from ops.json
+        let permission_level = self.permissions.read().get_permission(player.gameprofile.id);
+        player.set_permission_level(permission_level.as_i32());
+        log::debug!("Player {} has permission level {}", player.gameprofile.name, permission_level.as_i32());
 
         // Load saved player data if it exists
         match self.player_data_storage.load(player.gameprofile.id).await {

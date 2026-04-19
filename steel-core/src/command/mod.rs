@@ -37,15 +37,22 @@ impl CommandDispatcher {
         dispatcher.register(commands::gamerule::command_handler());
         dispatcher.register(commands::kill::command_handler());
         dispatcher.register(commands::give::command_handler());
+        dispatcher.register(commands::msg::msg_handler());
+        dispatcher.register(commands::msg::tell_handler());
+        dispatcher.register(commands::msg::w_handler());
+        dispatcher.register(commands::scoreboard::command_handler());
         dispatcher.register(commands::seed::command_handler());
         dispatcher.register(commands::stop::command_handler());
         dispatcher.register(commands::summon::command_handler());
+        dispatcher.register(commands::team::command_handler());
         dispatcher.register(commands::tellraw::command_handler());
         dispatcher.register(commands::tick::command_handler());
         dispatcher.register(commands::time::command_handler());
         dispatcher.register(commands::tp::command_handler());
         dispatcher.register(commands::weather::command_handler());
         dispatcher.register(commands::difficulty::command_handler());
+        dispatcher.register(commands::op::command_handler());
+        dispatcher.register(commands::deop::command_handler());
         dispatcher.register(commands::steel::command_handler());
         dispatcher.register(commands::xp::command_handler());
         dispatcher

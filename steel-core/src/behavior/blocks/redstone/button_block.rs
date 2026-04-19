@@ -197,4 +197,14 @@ impl BlockBehavior for ButtonBlock {
         }
         self.update_button_neighbors(state, world, pos);
     }
+
+    fn is_signal_source(&self, state: BlockStateId) -> bool {
+        let powered: bool = state.get_value(&BlockStateProperties::POWERED);
+        powered
+    }
+
+    fn get_signal(&self, state: BlockStateId, _world: &Arc<World>, _pos: BlockPos) -> i32 {
+        let powered: bool = state.get_value(&BlockStateProperties::POWERED);
+        if powered { 15 } else { 0 }
+    }
 }

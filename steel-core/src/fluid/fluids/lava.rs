@@ -23,6 +23,7 @@ use crate::fluid::{
     FluidRef, FluidState, FluidStateExt, get_fluid_state, get_height, is_lava_fluid,
     is_water_fluid, lava_id,
 };
+use crate::world::tick_scheduler::TickPriority;
 use crate::world::World;
 /// Lava fluid implementation.
 ///
@@ -152,6 +153,43 @@ impl FluidBehavior for LavaFluid {
 
     fn spread(&self, world: &Arc<World>, pos: BlockPos, fluid_state: FluidState) {
         self.base_spread(world, pos, fluid_state);
+    }
+
+    fn random_tick(&self, world: &Arc<World>, pos: BlockPos) {
+        static LAVA_IGNITE_CHANCES: &[&str] = &[
+            "minecraft:oak_planks", "minecraft:spruce_planks", "minecraft:birch_planks",
+            "minecraft:jungle_planks", "minecraft:acacia_planks", "minecraft:dark_oak_planks",
+            "minecraft:crimson_planks", "minecraft:warped_planks", "minecraft:oak_log", "minecraft:spruce_log",
+            "minecraft:birch_log", "minecraft:jungle_log", "minecraft:acacia_log", "minecraft:dark_oak_log",
+            "minecraft:crimson_stem", "minecraft:warped_stem", "minecraft:nether_brick_slab",
+        ];
+
+        if rand::random_range(0i32..100) < 5 {
+            for &dir in &[
+                Direction::North,
+                Direction::South,
+                Direction::East,
+                Direction::West,
+                Direction::Up,
+            ] {
+                let neighbor_pos = pos.relative(dir);
+                let neighbor_state = world.get_block_state(neighbor_pos);
+                if neighbor_state.is_air() {
+                    let below_pos = neighbor_pos.below();
+                    let below_state = world.get_block_state(below_pos);
+                    let below_key = format!("minecraft:{}", below_state.get_block().key.path);
+                    let burn_chance = LAVA_IGNITE_CHANCES.iter().position(|&b| b == below_key).map(|_| 5).unwrap_or(0);
+                    if burn_chance > 0 && rand::random_range(0i32..10000) < burn_chance * 10 {
+                        world.set_block(
+                            neighbor_pos,
+                            vanilla_blocks::FIRE.default_state(),
+                            UpdateFlags::UPDATE_ALL,
+                        );
+                        world.schedule_block_tick(neighbor_pos, &vanilla_blocks::FIRE, 1, TickPriority::Normal);
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -239,6 +239,39 @@ impl ChunkAccess {
         }
     }
 
+    /// Returns the height of the world this chunk belongs to.
+    #[must_use]
+    pub const fn height(&self) -> i32 {
+        match self {
+            Self::Full(chunk) => chunk.height(),
+            Self::Proto(proto_chunk) => proto_chunk.height(),
+            Self::Unloaded => unreachable!(),
+        }
+    }
+
+    /// Gets the world surface height at the given local position using the worldgen heightmap.
+    ///
+    /// Returns `None` if the heightmap is not available or the position is out of bounds.
+    #[must_use]
+    pub fn get_surface_height(&self, local_x: usize, local_z: usize) -> Option<i32> {
+        if local_x >= 16 || local_z >= 16 {
+            return None;
+        }
+        match self {
+            Self::Proto(proto) => {
+                let heightmaps = proto.heightmaps.read();
+                heightmaps.get(HeightmapType::WorldSurfaceWg).map(|h| {
+                    h.get_first_available(local_x, local_z)
+                })
+            }
+            Self::Full(_) => {
+                let heightmaps = self.as_full()?.heightmaps.read();
+                Some(heightmaps.world_surface.get_first_available(local_x, local_z))
+            }
+            Self::Unloaded => unreachable!(),
+        }
+    }
+
     /// Returns a read guard on the proto heightmaps.
     ///
     /// # Panics

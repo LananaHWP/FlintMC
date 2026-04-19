@@ -6,6 +6,11 @@
 mod biome_source;
 mod climate_sampler;
 mod nether_climate_sampler;
+pub mod carver;
+pub mod decoration;
+pub mod light;
+pub mod structures;
+pub mod spawn_rules;
 
 pub use biome_source::{
     BiomeSourceKind, ChunkBiomeSampler, EndBiomeSource, NetherBiomeSource, OverworldBiomeSource,

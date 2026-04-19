@@ -58,9 +58,7 @@ use steel_protocol::packets::game::{
     AnimateAction, CAddEntity, CAnimate, CChangeDifficulty, CDamageEvent, CEntityEvent,
     CEntityPositionSync, CHurtAnimation, COpenSignEditor, CPlayerCombatKill, CPlayerPosition,
     CRemoveEntities, CRespawn, CSetEntityData, CSetHealth, CSetHeldSlot, CSetTime,
-    CUpdateAttributes, ClientCommandAction, PlayerAction, PlayerCommandAction,
-    SAcceptTeleportation, SPickItemFromBlock, SPlayerAbilities, SPlayerAction, SPlayerCommand,
-    SSetCarriedItem, SUseItem, SUseItemOn,
+    CUpdateAttributes, CInitializeBorder, ClientCommandAction, PlayerAction, PlayerCommandAction,
 };
 use steel_protocol::utils::ConnectionProtocol;
 use steel_registry::blocks::block_state_ext::BlockStateExt;
@@ -92,6 +90,7 @@ use text_components::{
 use uuid::Uuid;
 
 use crate::entity::attribute::{AttributeMap, AttributeModifier, AttributeModifierOperation};
+use crate::entity::effect::ActiveEffectMap;
 use crate::entity::{
     DEATH_DURATION, Entity, EntityLevelCallback, LivingEntityBase, NullEntityCallback,
     RemovalReason,
@@ -111,7 +110,9 @@ use steel_protocol::packets::{
         CMoveEntityRot, COpenScreen, CPlayerChat, CPlayerInfoUpdate, CRotateHead,
         CSetChunkCacheRadius, CSystemChat, ChatTypeBound, FilterType, GameEventType,
         PreviousMessage, SChat, SChatAck, SChatSessionUpdate, SContainerButtonClick,
-        SContainerClick, SContainerClose, SContainerSlotStateChanged, SMovePlayer, SPlayerInput,
+        SContainerClick, SContainerClose, SContainerSlotStateChanged, SMovePlayer,
+        SPlayerInput, SAcceptTeleportation, SPlayerAbilities, SPlayerAction, SPlayerCommand,
+        SSetCarriedItem, SPickItemFromBlock, SUseItem, SUseItemOn,
         SSetCreativeModeSlot, SSignUpdate, calc_delta, to_angle_byte,
     },
 };
@@ -317,6 +318,9 @@ pub struct Player {
     /// Whether the player has been removed from the world.
     removed: AtomicBool,
 
+    /// The player's permission level (0-4).
+    pub permission_level: std::sync::atomic::AtomicI32,
+
     /// Callback for entity lifecycle events (movement between chunks, removal).
     level_callback: SyncMutex<Arc<dyn EntityLevelCallback>>,
 
@@ -326,12 +330,30 @@ pub struct Player {
     /// Monotonic counter bumped on world teleport/reset. The chunk sending tick
     /// snapshots this before encoding and compares after to detect stale batches.
     pub chunk_send_epoch: AtomicU32,
+
+    /// Active potion effects on the player.
+    pub active_effects: SyncMutex<ActiveEffectMap>,
 }
 
 impl Player {
     /// Returns true if the player is shifting (sneaking).
     pub fn is_crouching(&self) -> bool {
         self.entity_state.lock().crouching
+    }
+
+    /// Gets the player's permission level.
+    pub fn permission_level(&self) -> i32 {
+        self.permission_level.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Checks if the player is an operator (permission level > 0).
+    pub fn is_op(&self) -> bool {
+        self.permission_level() > 0
+    }
+
+    /// Sets the player's permission level.
+    pub fn set_permission_level(&self, level: i32) {
+        self.permission_level.store(level, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// Computes the start (eye position) and end positions for a raytrace.
@@ -417,9 +439,11 @@ impl Player {
             food_data: SyncMutex::new(FoodData::new()),
             health_sync: SyncMutex::new(HealthSyncState::new()),
             removed: AtomicBool::new(false),
+            permission_level: std::sync::atomic::AtomicI32::new(0),
             level_callback: SyncMutex::new(Arc::new(NullEntityCallback)),
             experience: SyncMutex::new(Experience::default()),
             chunk_send_epoch: AtomicU32::new(0),
+            active_effects: SyncMutex::new(ActiveEffectMap::new()),
         }
     }
 
@@ -3125,7 +3149,17 @@ impl Player {
         }
 
         // TODO: send mob effect packets once effects are implemented
-        // TODO: send CInitializeBorder once world border is implemented
+
+        // Send world border to player
+        let border = world.get_world_border();
+        self.send_packet(CInitializeBorder::new(
+            border.center_x,
+            border.center_z,
+            border.size,
+            border.absolute_max_size as i32,
+            border.warning_time,
+            border.warning_blocks,
+        ));
 
         // Broadcast respawned entity to other players
         // Vanilla: ChunkMap.addEntity -> addPairing -> sendPairingData
@@ -3496,6 +3530,10 @@ impl LivingEntity for Player {
         self.entity_data.lock().health.set(clamped);
     }
 
+    fn hurt(&self, source: DamageSource, amount: f32) {
+        Player::hurt(self, &source, amount);
+    }
+
     fn living_base(&self) -> &SyncMutex<LivingEntityBase> {
         &self.living_base
     }
@@ -3506,9 +3544,14 @@ impl LivingEntity for Player {
 
     fn set_absorption_amount(&self, amount: f32) {
         self.entity_data
-            .lock()
-            .player_absorption
-            .set(amount.max(0.0));
+.lock()
+            .player_absorption.set(amount);
+    }
+
+    fn set_y_velocity(&self, velocity: f64) {
+        let mut vel = self.movement.lock().delta_movement;
+        vel.y = velocity;
+        self.movement.lock().delta_movement = vel;
     }
 
     fn is_sprinting(&self) -> bool {
@@ -3526,6 +3569,10 @@ impl LivingEntity for Player {
 
     fn set_speed(&self, speed: f32) {
         self.speed.store(speed);
+    }
+
+    fn active_effects(&self) -> &SyncMutex<ActiveEffectMap> {
+        &self.active_effects
     }
 }
 

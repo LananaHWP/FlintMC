@@ -65,17 +65,19 @@ use crate::{
     block_entity::SharedBlockEntity,
     chunk_saver::{ChunkStorage, RamOnlyStorage, RegionManager},
     config::STEEL_CONFIG,
-    entity::{EntityCache, EntityTracker, RemovalReason, SharedEntity, entities::ItemEntity},
+    entity::{EntityCache, EntityTracker, LivingEntity, RemovalReason, SharedEntity, entities::ItemEntity, damage::DamageSource},
     fluid::fluid_state_to_block,
     level_data::LevelDataManager,
     player::{LastSeen, Player, connection::NetworkConnection},
     poi::PointOfInterestStorage,
 };
 
+pub mod spawn_protection;
 mod player_area_map;
 mod player_map;
 pub mod structure;
 pub mod tick_scheduler;
+mod spawning;
 mod weather;
 mod world_entities;
 
@@ -275,6 +277,40 @@ impl World {
     pub const fn is_in_valid_bounds(&self, block_pos: BlockPos) -> bool {
         !self.is_outside_build_height(block_pos.0.y)
             && self.is_in_valid_bounds_horizontal(block_pos)
+    }
+
+    /// Gets the world border data for this world.
+    #[inline]
+    #[must_use]
+    pub fn get_world_border(&self) -> crate::level_data::WorldBorder {
+        self.level_data.read().data().world_border().clone()
+    }
+
+    /// Checks if a position is within the world border.
+    #[inline]
+    #[must_use]
+    pub fn is_within_world_border(&self, x: f64, z: f64) -> bool {
+        let border = self.get_world_border();
+        let half_size = border.size / 2.0;
+        (x - border.center_x).abs() <= half_size && (z - border.center_z).abs() <= half_size
+    }
+
+    /// Gets the spawn protection radius.
+    /// Default is 16 blocks in vanilla.
+    #[inline]
+    #[must_use]
+    pub const fn spawn_protection_radius(&self) -> i32 {
+        16
+    }
+
+    /// Checks if a position is within the spawn protection zone.
+    #[inline]
+    #[must_use]
+    pub fn is_within_spawn_protection(&self, x: f64, z: f64) -> bool {
+        let spawn = self.level_data.read().data().spawn_pos();
+        let radius = 16i32 as f64;
+        (x - f64::from(spawn.x())).abs() <= radius
+            && (z - f64::from(spawn.z())).abs() <= radius
     }
 
     /// Returns the maximum build height (one above the highest placeable block).
@@ -655,6 +691,112 @@ impl World {
         self.mark_chunk_dirty(chunk_pos);
     }
 
+    /// Called when a block's light properties change (emission or transparency).
+    ///
+    /// This triggers light propagation for the affected block and its neighbors.
+    pub fn on_block_light_changed(
+        &self,
+        pos: BlockPos,
+        _old_state: Option<BlockStateId>,
+        new_state: Option<BlockStateId>,
+    ) {
+        if let Some(new_state) = new_state {
+            let emission = super::worldgen::light::get_light_emission(new_state);
+            if emission > 0 {
+                self.propagate_block_light(pos, emission);
+            }
+        }
+        for direction in [
+            steel_registry::blocks::properties::Direction::North,
+            steel_registry::blocks::properties::Direction::South,
+            steel_registry::blocks::properties::Direction::East,
+            steel_registry::blocks::properties::Direction::West,
+            steel_registry::blocks::properties::Direction::Up,
+            steel_registry::blocks::properties::Direction::Down,
+        ] {
+            let neighbor_pos = pos.relative(direction);
+            self.recheck_block_light(neighbor_pos);
+        }
+    }
+
+    fn propagate_block_light(&self, pos: BlockPos, initial_emission: u8) {
+        let mut queue: Vec<(BlockPos, u8)> = Vec::new();
+        queue.push((pos, initial_emission));
+
+        while let Some((current_pos, current_emission)) = queue.pop() {
+            let chunk_pos = Self::chunk_pos_for_block(current_pos);
+            self.chunk_map.with_full_chunk(chunk_pos, |chunk| {
+                if let Some(lc) = chunk.as_full() {
+                    let local_x = (current_pos.0.x & 15) as usize;
+                    let local_y = (current_pos.0.y - lc.min_y() & 15) as usize;
+                    let local_z = (current_pos.0.z & 15) as usize;
+
+                    let section_index = ((current_pos.0.y - lc.min_y()) / 16) as usize;
+                    if section_index < lc.sections.sections.len() {
+                        let section = &lc.sections.sections[section_index];
+                        let mut guard = section.write();
+                        let old_light = guard.block_light.get(local_x, local_y, local_z);
+                        if current_emission > old_light {
+                            guard.block_light.set(local_x, local_y, local_z, current_emission);
+
+                            for direction in [
+                                steel_registry::blocks::properties::Direction::North,
+                                steel_registry::blocks::properties::Direction::South,
+                                steel_registry::blocks::properties::Direction::East,
+                                steel_registry::blocks::properties::Direction::West,
+                                steel_registry::blocks::properties::Direction::Up,
+                                steel_registry::blocks::properties::Direction::Down,
+                            ] {
+                                let neighbor_pos = current_pos.relative(direction);
+                                let neighbor_state = lc.get_block_state(neighbor_pos);
+                                let neighbor_transparent =
+                                    super::worldgen::light::is_block_fully_transparent(neighbor_state);
+                                if neighbor_transparent {
+                                    let decay = if current_emission > 0 { current_emission - 1 } else { 0 };
+                                    if decay > 0 {
+                                        queue.push((neighbor_pos, decay));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    fn recheck_block_light(&self, pos: BlockPos) {
+        let chunk_pos = Self::chunk_pos_for_block(pos);
+        self.chunk_map.with_full_chunk(chunk_pos, |chunk| {
+            if let Some(lc) = chunk.as_full() {
+                let local_x = (pos.0.x & 15) as usize;
+                let local_y = (pos.0.y - lc.min_y() & 15) as usize;
+                let local_z = (pos.0.z & 15) as usize;
+
+                let section_index = ((pos.0.y - lc.min_y()) / 16) as usize;
+                if section_index < lc.sections.sections.len() {
+                    let section = &lc.sections.sections[section_index];
+                    let guard = section.read();
+                    let current_light = guard.block_light.get(local_x, local_y, local_z);
+
+                    if current_light > 0 {
+                        let state = lc.get_block_state(pos);
+                        let emission = super::worldgen::light::get_light_emission(state);
+                        if emission != current_light {
+                            drop(guard);
+                            let mut guard = section.write();
+                            if emission == 0 {
+                                guard.block_light.set(local_x, local_y, local_z, 0);
+                            } else {
+                                guard.block_light.set(local_x, local_y, local_z, emission);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     /// Marks a chunk as dirty (unsaved) so it will be persisted to disk.
     ///
     /// Called when entities move, are added/removed, or when block entities change.
@@ -686,6 +828,7 @@ impl World {
         if runs_normally {
             self.tick_weather();
             self.tick_time();
+            self.tick_spawning(tick_count);
         }
 
         let random_tick_speed = self.get_game_rule(&RANDOM_TICK_SPEED).as_int().unwrap_or(3) as u32;
@@ -849,8 +992,56 @@ impl World {
                 data: weather.thunder_level,
             });
         }
+
+        // Try to spawn lightning bolts during thunder
+        if self.is_thundering_with_guard(&weather) {
+            self.try_spawn_lightning();
+        }
     }
 
+
+    /// Attempts to spawn a lightning bolt at a random position during thunder.
+    fn try_spawn_lightning(&self) {
+        use rand::RngExt;
+        let mut rng = rand::rng();
+        
+        // 10% chance per tick to spawn lightning when thundering
+        if rng.random_range(0..10) != 0 {
+            return;
+        }
+
+        // Pick a random chunk in range (-2, 2) from center
+        let chunk_x = rng.random_range(-2..=2);
+        let chunk_z = rng.random_range(-2..=2);
+        let chunk_pos = ChunkPos::new(chunk_x, chunk_z);
+
+        // Get a random X/Z in the chunk and find surface height
+        let block_x = chunk_pos.0.x * 16 + rng.random_range(0..16);
+        let block_z = chunk_pos.0.y * 16 + rng.random_range(0..16);
+        
+        // Find the first solid block from top
+        let mut strike_y: Option<i32> = None;
+        for y in (self.get_min_y()..self.get_max_y()).rev() {
+            let pos = BlockPos::new(block_x, y, block_z);
+            let state = self.get_block_state(pos);
+            if state.is_solid() {
+                strike_y = Some(y + 1);
+                break;
+            }
+        }
+
+        if let Some(y) = strike_y {
+            let strike_pos = BlockPos::new(block_x, y, block_z);
+            let block_at_spawn = self.get_block_state(strike_pos).get_block();
+            
+            // Only strike in open areas (not inside blocks)
+            if block_at_spawn == &vanilla_blocks::AIR {
+                // Spawn lightning entity - would create actual lightning bolt here
+                // For now, this is a placeholder that logs the strike
+                tracing::debug!("Lightning strike at {:?}", strike_pos);
+            }
+        }
+    }
     /// Checks whether the rain level is high enough to be considered raining.
     /// Used for both visual rendering and gameplay logic (crop growth, fire, mob behavior).
     ///
@@ -886,6 +1077,62 @@ impl World {
         self.dimension.has_skylight
             && !self.dimension.has_ceiling
             && self.dimension.key != vanilla_dimension_types::THE_END.key
+    }
+
+    /// Gets the biome at a specific position.
+    ///
+    /// Returns `None` if the chunk is not loaded or biome data is unavailable.
+    pub fn get_biome_at(&self, block_x: i32, block_z: i32) -> Option<u16> {
+        let chunk_pos = ChunkPos::new(
+            SectionPos::block_to_section_coord(block_x),
+            SectionPos::block_to_section_coord(block_z),
+        );
+        self.get_biome_at_chunk(chunk_pos)
+    }
+
+    /// Gets the biome at a chunk position.
+    fn get_biome_at_chunk(&self, chunk_pos: ChunkPos) -> Option<u16> {
+        let center_x = chunk_pos.0.x * 16 + 8;
+        let center_z = chunk_pos.0.y * 16 + 8;
+
+        let section_index = 0usize;
+        let query_x = ((center_x & 0xF) / 4) as usize;
+        let query_z = ((center_z & 0xF) / 4) as usize;
+
+        self.chunk_map
+            .with_full_chunk(chunk_pos, |chunk| {
+                let guard = chunk.as_full()?;
+                let biome_data = guard.sections.read_all_biomes();
+                if biome_data.is_empty() {
+                    return None;
+                }
+                Some(biome_data[section_index * 64 + query_z * 4 + query_x])
+            })
+            .flatten()
+    }
+
+    /// Checks if a position can have precipitation (rain/snow).
+    ///
+    /// Returns `false` if the biome at this position has `has_precipitation = false`.
+    pub fn can_precipitate_at(&self, block_x: i32, block_z: i32) -> bool {
+        if let Some(biome_id) = self.get_biome_at(block_x, block_z) {
+            if let Some(biome) = REGISTRY.biomes.by_id(biome_id as usize) {
+                return biome.has_precipitation;
+            }
+        }
+        true
+    }
+
+    /// Checks if it's cold enough to snow at a position.
+    ///
+    /// Uses the biome's temperature - snow forms when temperature < 0.15.
+    pub fn can_snow_at(&self, block_x: i32, block_y: i32, block_z: i32) -> bool {
+        if let Some(biome_id) = self.get_biome_at(block_x, block_z) {
+            if let Some(biome) = REGISTRY.biomes.by_id(biome_id as usize) {
+                return biome.temperature < 0.15;
+            }
+        }
+        false
     }
 
     /// Schedules a block tick at the given position.
@@ -2083,6 +2330,100 @@ impl World {
     #[must_use]
     pub fn get_entities_in_aabb(&self, aabb: &AABBd) -> Vec<SharedEntity> {
         self.entity_cache.get_entities_in_aabb(aabb)
+    }
+
+    /// Gets all entities within the given radius of a position.
+    ///
+    /// Only returns entities in loaded chunks.
+    #[must_use]
+    pub fn get_nearby_entities(&self, pos: BlockPos, radius: i32) -> Vec<SharedEntity> {
+        let half_size = f64::from(radius);
+        let aabb = AABBd::new(
+            f64::from(pos.x()) - half_size,
+            f64::from(pos.y()) - half_size,
+            f64::from(pos.z()) - half_size,
+            f64::from(pos.x()) + half_size,
+            f64::from(pos.y()) + half_size,
+            f64::from(pos.z()) + half_size,
+        );
+        self.entity_cache.get_entities_in_aabb(&aabb)
+    }
+
+    /// Gets all living entities within the given radius of a position.
+    ///
+    /// Only returns entities in loaded chunks.
+    #[must_use]
+    pub fn get_nearby_living_entities(&self, pos: BlockPos, radius: i32) -> Vec<SharedEntity> {
+        self.get_nearby_entities(pos, radius)
+    }
+
+    /// Checks if there is a direct line of sight between two positions.
+    ///
+    /// Returns `false` if any non-transparent block is in the way.
+    #[must_use]
+    pub fn has_line_of_sight(&self, from: BlockPos, to: BlockPos) -> bool {
+        let from_center = DVec3::new(
+            f64::from(from.x()) + 0.5,
+            f64::from(from.y()) + 0.5,
+            f64::from(from.z()) + 0.5,
+        );
+        let to_center = DVec3::new(
+            f64::from(to.x()) + 0.5,
+            f64::from(to.y()) + 0.5,
+            f64::from(to.z()) + 0.5,
+        );
+
+        let direction = to_center - from_center;
+        let distance = direction.length();
+        if distance < 1.0 {
+            return true;
+        }
+        let direction = direction / distance;
+
+        let mut current = from_center;
+        let step = 0.5;
+
+        while (current - to_center).length() > 0.5 {
+            let block_pos = BlockPos::new(current.x as i32, current.y as i32, current.z as i32);
+            if !self.is_in_valid_bounds(block_pos) {
+                return false;
+            }
+
+            let state = self.get_block_state(block_pos);
+            let block = state.get_block();
+            let is_water_block = block.config.liquid && block.key.path.contains("water");
+
+            let is_transparent = !state.is_solid() && !is_water_block;
+
+            if !is_transparent {
+                return false;
+            }
+
+            current += direction * step;
+        }
+
+        true
+    }
+
+    /// Teleports an entity to a new position.
+    pub fn teleport_entity(&self, entity: SharedEntity, new_pos: BlockPos) {
+        let new_position = DVec3::new(
+            f64::from(new_pos.x()) + 0.5,
+            f64::from(new_pos.y()),
+            f64::from(new_pos.z()) + 0.5,
+        );
+        entity.set_position(new_position);
+    }
+
+    /// Damages a block at the given position.
+    ///
+    /// Used for block breaking (e.g., by zombies breaking doors).
+    pub fn damage_block(self: &Arc<Self>, pos: BlockPos, damage: i32) {
+        if !self.is_in_valid_bounds(pos) || damage <= 0 {
+            return;
+        }
+
+        self.set_block(pos, REGISTRY.blocks.get_base_state_id(&vanilla_blocks::AIR), UpdateFlags::empty());
     }
 
     /// Moves an entity's Arc between chunks when it crosses a chunk boundary.

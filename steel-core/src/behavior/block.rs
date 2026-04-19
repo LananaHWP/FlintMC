@@ -379,6 +379,87 @@ pub trait BlockBehavior: Send + Sync {
         0
     }
 
+    /// Returns whether this block is a source of redstone power.
+    ///
+    /// Override to return `true` for blocks that emit redstone power
+    /// (buttons, levers, pressure plates, redstone torches when lit).
+    #[expect(
+        unused_variables,
+        reason = "default trait implementation ignores all params"
+    )]
+    fn is_signal_source(&self, state: BlockStateId) -> bool {
+        false
+    }
+
+    /// Returns the redstone signal strength (0-15) this block provides.
+    ///
+    /// Only called if `is_signal_source()` returns `true`.
+    /// For most sources, this is 15. For redstone dust, it depends on distance.
+    ///
+    /// # Arguments
+    /// * `state` - The current block state
+    /// * `world` - The world
+    /// * `pos` - The position of the block
+    #[expect(
+        unused_variables,
+        reason = "default trait implementation ignores all params"
+    )]
+    fn get_signal(&self, state: BlockStateId, world: &Arc<World>, pos: BlockPos) -> i32 {
+        0
+    }
+
+    /// Returns the redstone power level (0-15) at a position from an adjacent block.
+    ///
+    /// This is called by neighbors to determine how much power this block receives.
+    /// Delegates to `get_signal` for source blocks, or calculates propagated power
+    /// for wire blocks.
+    ///
+    /// # Arguments
+    /// * `state` - The current block state
+    /// * `world` - The world
+    /// * `pos` - The position of the block
+    /// * `direction` - The direction the signal is coming from
+    #[expect(
+        unused_variables,
+        reason = "default trait implementation ignores all params"
+    )]
+    fn get_block_power(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        direction: Direction,
+    ) -> i32 {
+        if self.is_signal_source(state) {
+            self.get_signal(state, world, pos)
+        } else {
+            0
+        }
+    }
+
+    /// Notifies this block that a neighbor's redstone power changed.
+    ///
+    /// Used by redstone wire to recalculate its power level when an adjacent
+    /// block's power changes.
+    ///
+    /// # Arguments
+    /// * `state` - The current block state
+    /// * `world` - The world
+    /// * `pos` - The position of the block
+    /// * `source_block` - The block type that changed
+    /// * `moved_by_piston` - Whether the change was caused by a piston
+    fn on_neighbor_signal_changed(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        source_block: BlockRef,
+        moved_by_piston: bool,
+    ) {
+        // Default: call handle_neighbor_changed for backward compatibility
+        self.handle_neighbor_changed(state, world, pos, source_block, moved_by_piston);
+    }
+
     // === Fluid Methods ===
 
     /// Returns the fluid state for this block state.

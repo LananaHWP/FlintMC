@@ -12,10 +12,12 @@ use steel_registry::blocks::block_state_ext::BlockStateExt;
 use steel_registry::blocks::properties::{BlockStateProperties, Direction};
 use steel_registry::blocks::shapes::SupportType;
 use steel_registry::vanilla_blocks;
+use steel_utils::types::UpdateFlags;
 use steel_utils::{BlockPos, BlockStateId};
 
 use crate::behavior::block::BlockBehavior;
 use crate::behavior::context::BlockPlaceContext;
+use crate::behavior::BLOCK_BEHAVIORS;
 use crate::world::World;
 
 /// Standing redstone torch (`redstone_torch`).
@@ -67,7 +69,42 @@ impl BlockBehavior for RedstoneTorchBlock {
         Some(default_state.set_value(&BlockStateProperties::LIT, true))
     }
 
-    // TODO: implement redstone signal source behavior, neighbor updates, and burnout.
+    fn is_signal_source(&self, state: BlockStateId) -> bool {
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        lit
+    }
+
+    fn get_signal(&self, state: BlockStateId, _world: &Arc<World>, _pos: BlockPos) -> i32 {
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        if lit { 15 } else { 0 }
+    }
+
+    fn on_neighbor_signal_changed(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        _source_block: BlockRef,
+        moved_by_piston: bool,
+    ) {
+        if moved_by_piston {
+            return;
+        }
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        if !lit {
+            return;
+        }
+        let below_pos = pos.below();
+        let below_state = world.get_block_state(below_pos);
+        let below_block = below_state.get_block();
+        let below_behavior = BLOCK_BEHAVIORS.get_behavior(below_block);
+        let powered = below_behavior.get_block_power(below_state, world, below_pos, Direction::Up);
+        if powered > 0 {
+            let unlit_state = state.set_value(&BlockStateProperties::LIT, false);
+            world.set_block(pos, unlit_state, UpdateFlags::UPDATE_ALL);
+            world.update_neighbors_at(pos, self.block);
+        }
+    }
 }
 
 /// Wall redstone torch (`redstone_wall_torch`).
@@ -149,5 +186,41 @@ impl BlockBehavior for RedstoneWallTorchBlock {
         None
     }
 
-    // TODO: implement redstone signal source behavior, neighbor updates, and burnout.
+    fn is_signal_source(&self, state: BlockStateId) -> bool {
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        lit
+    }
+
+    fn get_signal(&self, state: BlockStateId, _world: &Arc<World>, _pos: BlockPos) -> i32 {
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        if lit { 15 } else { 0 }
+    }
+
+    fn on_neighbor_signal_changed(
+        &self,
+        state: BlockStateId,
+        world: &Arc<World>,
+        pos: BlockPos,
+        _source_block: BlockRef,
+        moved_by_piston: bool,
+    ) {
+        if moved_by_piston {
+            return;
+        }
+        let lit: bool = state.get_value(&BlockStateProperties::LIT);
+        if !lit {
+            return;
+        }
+        let facing: Direction = state.get_value(&BlockStateProperties::HORIZONTAL_FACING);
+        let attach_pos = facing.relative(pos);
+        let attach_state = world.get_block_state(attach_pos);
+        let attach_block = attach_state.get_block();
+        let attach_behavior = BLOCK_BEHAVIORS.get_behavior(attach_block);
+        let powered = attach_behavior.get_block_power(attach_state, world, attach_pos, facing);
+        if powered > 0 {
+            let unlit_state = state.set_value(&BlockStateProperties::LIT, false);
+            world.set_block(pos, unlit_state, UpdateFlags::UPDATE_ALL);
+            world.update_neighbors_at(pos, self.block);
+        }
+    }
 }

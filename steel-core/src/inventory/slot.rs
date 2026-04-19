@@ -692,9 +692,94 @@ impl Slot for CraftingResultSlot {
         }
     }
 
-    /// Crafting result slots are "fake" - they don't persist items.
+/// Crafting result slots are "fake" - they don't persist items.
     fn is_fake(&self) -> bool {
         true
+    }
+}
+
+/// A result slot for furnace/smelting output.
+/// This is simpler than CraftingResultSlot and just prevents placement.
+pub struct ResultSlot {
+    container: SyncResultContainer,
+}
+
+impl ResultSlot {
+    /// Creates a new result slot.
+    pub const fn new(container: SyncResultContainer) -> Self {
+        Self { container }
+    }
+
+    /// Returns a reference to the container.
+    #[must_use]
+    pub fn container_ref(&self) -> ContainerRef {
+        ContainerRef::ResultContainer(Arc::clone(&self.container))
+    }
+}
+
+impl Slot for ResultSlot {
+    fn get_item<'a>(&self, guard: &'a ContainerLockGuard) -> &'a ItemStack {
+        guard
+            .get(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .get_item(0)
+    }
+
+    fn get_item_mut<'a>(&self, guard: &'a mut ContainerLockGuard) -> &'a mut ItemStack {
+        guard
+            .get_mut(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .get_item_mut(0)
+    }
+
+    fn set_item(&self, guard: &mut ContainerLockGuard, stack: ItemStack) {
+        guard
+            .get_mut(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .set_item(0, stack);
+    }
+
+    fn may_place(&self, _stack: &ItemStack) -> bool {
+        false
+    }
+
+    fn allow_modification(&self, _guard: &ContainerLockGuard, _player: &Player) -> bool {
+        false
+    }
+
+    fn remove(&self, guard: &mut ContainerLockGuard, _amount: i32) -> ItemStack {
+        mem::take(self.get_item_mut(guard))
+    }
+
+    fn set_changed(&self, guard: &mut ContainerLockGuard) {
+        guard
+            .get_mut(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .set_changed();
+    }
+
+    fn get_container_slot(&self) -> usize {
+        0
+    }
+
+    fn get_max_stack_size(&self, guard: &ContainerLockGuard) -> i32 {
+        guard
+            .get(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .get_max_stack_size()
+    }
+
+    fn on_take(
+        &self,
+        guard: &mut ContainerLockGuard,
+        _stack: &ItemStack,
+        _player: &Player,
+    ) -> Option<ItemStack> {
+        guard
+            .get_mut(ContainerId::from_arc(&self.container))
+            .expect("container not locked")
+            .set_item(0, ItemStack::empty());
+        None
     }
 }
 
@@ -709,6 +794,8 @@ pub enum SlotType {
     CraftingGrid(CraftingGridSlot),
     /// Crafting result slot (fake, doesn't persist items).
     CraftingResult(CraftingResultSlot),
+    /// Furnace/smelting result slot (output only, doesn't allow placement).
+    Result(ResultSlot),
 }
 
 impl SlotType {
@@ -724,6 +811,7 @@ impl SlotType {
             SlotType::CraftingResult(s) => {
                 vec![s.result_container_ref(), s.crafting_container_ref()]
             }
+            SlotType::Result(s) => vec![s.container_ref()],
         }
     }
 

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+﻿use std::marker::PhantomData;
 
 use sha2::{Digest, Sha256};
 use steel_registry::RegistryEntry;
@@ -22,14 +22,17 @@ use crate::chunk::noise_chunk::NoiseChunk;
 use crate::chunk::ore_veinifier::OreVeinifier;
 use crate::chunk::surface_system::SurfaceSystem;
 use crate::worldgen::BiomeSourceKind;
+use crate::worldgen::carver::CarverGenerator;
+use crate::worldgen::decoration::FeatureGenerator;
+use crate::worldgen::structures::StructureGenerator;
 
 /// A chunk generator for vanilla (normal) world generation.
 ///
-/// Matches vanilla's `NoiseBasedChunkGenerator`. The biome source is pluggable
+/// Matches vanilla's NoiseBasedChunkGenerator. The biome source is pluggable
 /// per-dimension — overworld, nether, and end each provide a different
-/// [`BiomeSourceKind`] variant.
+/// [BiomeSourceKind] variant.
 ///
-/// Generic over `N: DimensionNoises` to support different dimensions with
+/// Generic over N: DimensionNoises to support different dimensions with
 /// their own transpiled density functions and noise settings.
 pub struct VanillaGenerator<N: DimensionNoises> {
     /// Biome source for this dimension. Determines biomes at each quart position.
@@ -45,13 +48,17 @@ pub struct VanillaGenerator<N: DimensionNoises> {
     surface_system: SurfaceSystem,
     /// Block state ID for the default block, cached at construction time.
     default_block_id: BlockStateId,
-    /// Obfuscated seed for `BiomeManager` biome zoom fuzzing.
+    /// Obfuscated seed for BiomeManager biome zoom fuzzing.
     biome_zoom_seed: i64,
+    /// Seed for feature generation.
+    feature_seed: u64,
+    /// Seed for structure generation.
+    structure_seed: u64,
     _phantom: PhantomData<N>,
 }
 
 impl<N: DimensionNoises> VanillaGenerator<N> {
-    /// Creates a new `VanillaGenerator` with the given biome source and seed.
+    /// Creates a new VanillaGenerator with the given biome source and seed.
     ///
     /// # Panics
     /// Panics if SHA-256 hash output is shorter than 8 bytes (cannot happen).
@@ -90,6 +97,9 @@ impl<N: DimensionNoises> VanillaGenerator<N> {
             i64::from_le_bytes(result[0..8].try_into().expect("SHA-256 produces 32 bytes"))
         };
 
+        let feature_seed = seed;
+        let structure_seed = seed;
+
         Self {
             biome_source,
             noises: Box::new(noises),
@@ -98,13 +108,19 @@ impl<N: DimensionNoises> VanillaGenerator<N> {
             surface_system,
             default_block_id,
             biome_zoom_seed,
+            feature_seed,
+            structure_seed,
             _phantom: PhantomData,
         }
     }
 }
 
 impl<N: DimensionNoises> ChunkGenerator for VanillaGenerator<N> {
-    fn create_structures(&self, _chunk: &ChunkAccess) {}
+    fn create_structures(&self, chunk: &ChunkAccess) {
+        let biome_id = 1; // TODO: Get from chunk or proper biome source
+        let mut generator = StructureGenerator::new(self.structure_seed);
+        generator.apply_structure_generation(chunk, biome_id);
+    }
 
     fn create_biomes(&self, chunk: &ChunkAccess) {
         let pos = chunk.pos();
@@ -392,8 +408,8 @@ impl<N: DimensionNoises> ChunkGenerator for VanillaGenerator<N> {
                     }
 
                     // Solid block — scan for stone_depth_below (lookahead).
-                    // Range starts at `min_y - 1` as a sentinel: the first iteration
-                    // hits `la_y < min_y`, treating the world floor as a cavity boundary.
+                    // Range starts at min_y - 1 as a sentinel: the first iteration
+                    // hits la_y < min_y, treating the world floor as a cavity boundary.
                     if next_ceiling_stone_y >= y {
                         next_ceiling_stone_y = i32::MIN;
                         for la_y in (min_y - 1..y).rev() {
@@ -473,14 +489,20 @@ impl<N: DimensionNoises> ChunkGenerator for VanillaGenerator<N> {
         }
     }
 
-    fn apply_carvers(&self, _chunk: &ChunkAccess) {}
+    fn apply_carvers(&self, chunk: &ChunkAccess) {
+        let mut generator = CarverGenerator::new(self.feature_seed);
+        generator.apply_biome_carvers(chunk);
+    }
 
-    fn apply_biome_decorations(&self, _chunk: &ChunkAccess) {}
+    fn apply_biome_decorations(&self, chunk: &ChunkAccess) {
+        let mut generator = FeatureGenerator::new(self.feature_seed);
+        generator.apply_biome_decorations(chunk);
+    }
 }
 
 // ── BiomeManager biome zoom helpers ──────────────────────────────────────────
 
-/// Vanilla's `LinearCongruentialGenerator.next()`.
+/// Vanilla's LinearCongruentialGenerator.next().
 #[inline]
 const fn lcg_next(mut rval: i64, c: i64) -> i64 {
     rval = rval.wrapping_mul(
@@ -491,19 +513,19 @@ const fn lcg_next(mut rval: i64, c: i64) -> i64 {
     rval
 }
 
-/// Vanilla's `BiomeManager.getFiddle()`.
+/// Vanilla's BiomeManager.getFiddle().
 #[inline]
 fn get_fiddle(rval: i64) -> f64 {
     let uniform = ((rval >> 24).rem_euclid(1024)) as f64 / 1024.0;
     (uniform - 0.5) * 0.9
 }
 
-/// Column-local cache for fuzzed biome lookups (vanilla `BiomeManager.getBiome()`).
+/// Column-local cache for fuzzed biome lookups (vanilla BiomeManager.getBiome()).
 ///
-/// Within a column, `parent_x`, `parent_z`, `fract_x`, `fract_z` are constant.
+/// Within a column, parent_x, parent_z, ract_x, ract_z are constant.
 /// The 8 Voronoi candidate fiddle values (computed via 8 serial LCG calls each)
-/// only change when `parent_y` changes (every 4 blocks). This cache precomputes
-/// the fiddle values and X/Z distance components per `parent_y` group, reducing
+/// only change when parent_y changes (every 4 blocks). This cache precomputes
+/// the fiddle values and X/Z distance components per parent_y group, reducing
 /// per-block work to 8 additions + 8 multiplies + 8 comparisons.
 struct FuzzedBiomeColumn<'a> {
     biome_data: &'a [u16],
@@ -518,9 +540,9 @@ struct FuzzedBiomeColumn<'a> {
     chunk_quart_z: i32,
     neighbor_biomes: &'a dyn Fn(i32, i32, i32) -> u16,
     cached_parent_y: i32,
-    /// Per-candidate cached values: (`fy`, `xz_partial_distance`).
+    /// Per-candidate cached values: (y, xz_partial_distance).
     candidates: [(f64, f64); 8],
-    /// Precomputed `lcg_next(seed, parent_x)` and `lcg_next(seed, parent_x + 1)`.
+    /// Precomputed lcg_next(seed, parent_x) and lcg_next(seed, parent_x + 1).
     rval_after_cx: [i64; 2],
 }
 
@@ -565,9 +587,9 @@ impl<'a> FuzzedBiomeColumn<'a> {
         }
     }
 
-    /// Compute candidates for a given `cy`, writing to either the low (bit1=0)
-    /// or high (bit1=1) slots. Shares the `lcg_next(seed, cx)` precomputation
-    /// and the `lcg_next(_, cy)` step within each cx group.
+    /// Compute candidates for a given cy, writing to either the low (bit1=0)
+    /// or high (bit1=1) slots. Shares the lcg_next(seed, cx) precomputation
+    /// and the lcg_next(_, cy) step within each cx group.
     #[inline]
     fn compute_cy_group(&mut self, cy: i32, high: bool) {
         let base_idx = if high { 2 } else { 0 };
@@ -603,10 +625,10 @@ impl<'a> FuzzedBiomeColumn<'a> {
         }
     }
 
-    /// Recompute the 8 candidate fiddle values and X/Z distance for a new `parent_y`.
+    /// Recompute the 8 candidate fiddle values and X/Z distance for a new parent_y.
     ///
-    /// When scanning downward (`parent_y` decreases by 1), the old low-cy candidates
-    /// (`cy=old_parent_y`) match the new high-cy slots (`cy=new_parent_y+1`), so only
+    /// When scanning downward (parent_y decreases by 1), the old low-cy candidates
+    /// (cy=old_parent_y) match the new high-cy slots (cy=new_parent_y+1), so only
     /// the 4 new low-cy candidates need fresh LCG computation.
     fn recompute_candidates(&mut self, parent_y: i32) {
         if self.cached_parent_y != i32::MIN && parent_y == self.cached_parent_y - 1 {
@@ -623,7 +645,7 @@ impl<'a> FuzzedBiomeColumn<'a> {
         self.cached_parent_y = parent_y;
     }
 
-    /// Fuzzed biome lookup for a given `block_y`.
+    /// Fuzzed biome lookup for a given lock_y.
     #[expect(
         clippy::similar_names,
         reason = "matches vanilla variable names: fract_x/y/z, parent_x/y/z"

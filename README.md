@@ -104,7 +104,7 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 
 ### High Priority
 - [ ] Potion Effects system (framework exists, needs full implementation)
-- [ ] Fire spread mechanics
+- [x] Fire spread mechanics
 - [ ] Enchantment application
 - [ ] Projectiles (arrows, fireballs, tridents)
 - [ ] Advancements system
@@ -136,33 +136,3 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 [Discord](https://discord.gg/MwChEHnAbh) | [GitCraft](https://github.com/WinPlay02/GitCraft) | [Fork from SteelMC](https://github.com/4lve/SteelMC)
 </div>
 
----
-
-## ⚙ How to Contribute
-
-1. Identify a feature you'd like to add or an issue to work on.
-   You should always create a post in the channel [feature-discussion](https://canary.discord.com/channels/1428487339759370322/1429074039015473272) when considering adding a major feature.
-2. Decompile Minecraft 26.1 by running the provided script:
-   ```bash
-   ./update-minecraft-src.sh
-   ```
-   This will clone GitCraft and generate the decompiled source in `minecraft-src/`.
-3. Fork the `master` branch of this repository.
-4. Examine the vanilla implementation and translate it into idiomatic Rust as cleanly and efficiently as possible.
-5. Commit your changes to your fork and open a pull request.
-
-> [!NOTE]
-> It is highly recommended to join the [Discord server](https://discord.gg/MwChEHnAbh) and reach out to [4lve](https://github.com/4lve) if you have code-related questions or encounter any ambiguities.
-
-> [!IMPORTANT]
-> This project is still in a very early stage of development.
-
-### Precommit Hook
-This repository uses [prek](https://prek.j178.dev/) to ensure that all commits follow the style guide and makes sure the cicd will pass.
-To install the hook, some things needed to be installed first:
-```bash
-cargo install prek typos-cli --locked
-```
-
-Then you can run `prek install` to install the hook and it is configured to run automatically before every commit.
-It will fix some things already for you, but the commit will still fail and please check the changes.

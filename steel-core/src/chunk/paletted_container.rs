@@ -274,6 +274,8 @@ fn pack_bits(indices: &[u32], bits: usize) -> Vec<u64> {
 pub type BlockPalette = PalettedContainer<BlockStateId, 16>;
 /// A palette container for biomes.
 pub type BiomePalette = PalettedContainer<u16, 4>;
+/// A palette container for light levels (0-15).
+pub type LightPalette = PalettedContainer<u8, 16>;
 
 impl BlockPalette {
     /// Gets the number of non-empty blocks in the container.

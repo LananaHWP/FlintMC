@@ -38,11 +38,13 @@ pub fn next_entity_id() -> i32 {
     ENTITY_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+pub mod ai;
 pub mod attribute;
 mod base;
 mod cache;
 mod callback;
 pub mod damage;
+pub mod effect;
 pub mod entities;
 mod living_base;
 mod registry;
@@ -412,11 +414,17 @@ pub trait LivingEntity: Entity {
     /// Returns a reference to this entity's attribute map.
     fn attributes(&self) -> &SyncMutex<AttributeMap>;
 
+    /// Damages this entity with the given damage source and amount.
+    fn hurt(&self, source: DamageSource, amount: f32);
+
     /// Gets the current health of the entity.
     fn get_health(&self) -> f32;
 
     /// Sets the health of the entity, clamped between 0 and max health.
     fn set_health(&self, health: f32);
+
+    /// Sets vertical (Y) velocity, for jumping/floating.
+    fn set_y_velocity(&self, velocity: f64);
 
     /// Gets the maximum health from the attribute system.
     fn get_max_health(&self) -> f32 {
@@ -473,6 +481,21 @@ pub trait LivingEntity: Entity {
     /// Checks if the entity can be affected by potions.
     fn is_affected_by_potions(&self) -> bool {
         true
+    }
+
+    /// Checks if the entity is immune to wither effect.
+    fn is_immune_to_wither(&self) -> bool {
+        false
+    }
+
+    /// Checks if the entity is poison-safe (immune to poison).
+    fn is_poison_source_safe(&self) -> bool {
+        false
+    }
+
+    /// Checks if the entity is in water.
+    fn is_in_water(&self) -> bool {
+        false
     }
 
     /// Checks if the entity is attackable.
@@ -538,6 +561,62 @@ pub trait LivingEntity: Entity {
             }
             // TODO: SCALE → refreshDimensions()
             // TODO: WAYPOINT_TRANSMIT_RANGE → waypoint manager
+        }
+    }
+
+    fn active_effects(&self) -> &SyncMutex<crate::entity::effect::ActiveEffectMap>;
+
+    fn apply_effect(&self, effect: crate::entity::effect::StatusEffect, duration: i32, amplifier: i32)
+    where
+        Self: Sized,
+    {
+        if self.is_affected_by_potions() {
+            let mut effects = self.active_effects().lock();
+            let old_effect = effects.get(effect);
+            if old_effect.map(|e| e.duration < duration).unwrap_or(true) {
+                effect.on_effect_end(self);
+                effects.add_effect(effect, amplifier, duration);
+                effect.apply(self, amplifier, duration);
+            }
+        }
+    }
+
+    fn remove_effect(&self, effect: crate::entity::effect::StatusEffect)
+    where
+        Self: Sized,
+    {
+        let mut effects = self.active_effects().lock();
+        if effects.remove_effect(effect).is_some() {
+            effect.on_effect_end(self);
+        }
+    }
+
+    fn has_effect(&self, effect: crate::entity::effect::StatusEffect) -> bool {
+        self.active_effects().lock().has_effect(effect)
+    }
+
+    fn tick_effects(&self)
+    where
+        Self: Sized,
+    {
+        if self.is_dead_or_dying() {
+            return;
+        }
+
+        let mut effects = self.active_effects().lock();
+        for (effect, active) in effects.iter() {
+            effect.tick(self, active.amplifier, active.duration, active.ambient);
+        }
+        effects.tick();
+        let expired: Vec<_> = effects
+            .iter()
+            .filter(|(_, active)| active.is_expired())
+            .map(|(effect, _)| *effect)
+            .collect();
+        drop(effects);
+
+        for effect in expired {
+            effect.on_effect_end(self);
         }
     }
 }

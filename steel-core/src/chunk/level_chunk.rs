@@ -515,19 +515,28 @@ impl LevelChunk {
         let old_block = old_state.get_block();
         let new_block = state.get_block();
 
-        // TODO: Light updates
-        // In vanilla, light engine is notified when section emptiness changes:
-        // let is_empty = section.read().states.has_only_air();
-        // if was_empty != is_empty {
-        //     level.chunk_source.light_engine.update_section_status(pos, is_empty);
-        //     level.chunk_source.on_section_emptiness_changed(chunk_pos.x, section_y, chunk_pos.z, is_empty);
-        // }
-        //
-        // And when light properties change:
-        // if LightEngine::has_different_light_properties(old_state, state) {
-        //     self.sky_light_sources.update(self, local_x, y, local_z);
-        //     level.chunk_source.light_engine.check_block(pos);
-        // }
+        // Light updates on block changes
+        if let Some(level) = self.get_level() {
+            let old_emission = crate::worldgen::light::get_light_emission(old_state);
+            let new_emission = crate::worldgen::light::get_light_emission(state);
+            let old_transparent = crate::worldgen::light::is_block_fully_transparent(old_state);
+            let new_transparent = crate::worldgen::light::is_block_fully_transparent(state);
+
+            // Notify world of light changes for propagation
+            if old_emission != new_emission || old_transparent != new_transparent {
+                let prev_state = if old_emission > 0 {
+                    Some(old_state)
+                } else {
+                    None
+                };
+                let new_state_light = if new_emission > 0 {
+                    Some(state)
+                } else {
+                    None
+                };
+                level.on_block_light_changed(pos, prev_state, new_state_light);
+            }
+        }
 
         // Re-read the block to verify it wasn't changed concurrently
         let current_block = section
