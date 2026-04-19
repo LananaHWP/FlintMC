@@ -149,9 +149,9 @@ impl ChunkStatusTasks {
         _cache: &Arc<StaticCache2D<Arc<ChunkHolder>>>,
         holder: Arc<ChunkHolder>,
     ) {
-        let chunk = holder
-            .try_chunk(ChunkStatus::Carvers)
-            .expect("Chunk not found at status Carvers");
+        let Some(chunk) = holder.try_chunk(ChunkStatus::Carvers) else {
+            return;
+        };
         
         context.generator.apply_carvers(&chunk);
     }
@@ -163,9 +163,9 @@ impl ChunkStatusTasks {
         _cache: &Arc<StaticCache2D<Arc<ChunkHolder>>>,
         holder: Arc<ChunkHolder>,
     ) {
-        let chunk = holder
-            .try_chunk(ChunkStatus::Carvers)
-            .expect("Chunk not found at status Carvers");
+        let Some(chunk) = holder.try_chunk(ChunkStatus::Carvers) else {
+            return;
+        };
         
         context.generator.apply_biome_decorations(&chunk);
     }
