@@ -33,7 +33,7 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 - ✅ Biome decoration (8 stages)
 - ✅ Ore generation (all ore types)
 - ✅ Structure generation (villages, desert pyramids, jungle temples, swamp huts, ocean monuments, mineshafts, strongholds, nether fortresses, bastion remnants, ruined portals, shipwrecks, dungeons, igloos, end cities, ancient cities, woodland mansions, trial chambers, trail ruins)
-- ✅ Jigsaw template pool loading (basic)
+- ✅ Jigsaw template pool loading
 - ✅ Biome spawn rules
 
 ### Block Behaviors
@@ -44,15 +44,38 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 - ✅ Fluids (water, lava flow)
 - ✅ Functional blocks (dispenser, dropper, crafter, crafting table, stonecutter, loom, grindstone, bell, jukebox, anvil, beacon, note block, smithing table)
 - ✅ Signs (floor/wall/hanging)
-- ✅ 17+ additional block behaviors implemented
+- ✅ Fire spread mechanics
+- ✅ 17+ additional block behaviors
 
 ### Entity System
 - ✅ MobEntity with full AI goal system
-- ✅ AI Goals: RandomStroll, Float, MeleeAttack, Tempt, Climb, TeleportWhenTargetGone, BreakDoor, LookAtPlayer, and 20+ more
+- ✅ AI Goals: RandomStroll, Float, MeleeAttack, Tempt, Climb, TeleportWhenTargetGone, BreakDoor, LookAtPlayer, BreedGoal, and 20+ more
 - ✅ Mob-specific AI (zombie, skeleton, creeper, spider, enderman, slime, blaze, piglin, cow, pig, sheep, chicken, horse, wolf, cat, rabbit, dolphin, squid, iron golem, snow golem)
 - ✅ Light level checks for mob spawning
 - ✅ Player proximity checks
 - ✅ Biome-specific spawn restrictions
+- ✅ Mob breeding (BreedGoal with love mode)
+
+### Potion Effects
+- ✅ All 40 status effects
+- ✅ Effect application (attribute modifiers)
+- ✅ Per-tick effects (regeneration, poison, wither damage)
+- ✅ Effect duration and amplifier
+- ✅ Effect removal cleanup
+
+### Projectiles
+- ✅ Arrow entity (arc trajectory, collision, damage)
+- ✅ Fireball entity (explosion on hit)
+
+### Enchantments
+- ✅ Enchantment application to items
+- ✅ Enchantment effect calculations (damage, armor, mining speed)
+- ✅ Enchanting table menu options
+
+### Advancements
+- ✅ Advancement framework
+- ✅ Player advancement tracking
+- ✅ Advancement triggers
 
 ### Inventory/Menus
 - ✅ Player inventory, crafting table, chest menus
@@ -102,14 +125,6 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 
 ## TODO (Not Yet Implemented)
 
-### High Priority
-- [x] Potion Effects system (framework + status effects)
-- [x] Fire spread mechanics
-- [ ] Enchantment application
-- [ ] Projectiles (arrows, fireballs, tridents)
-- [ ] Advancements system
-- [x] Mob breeding (BreedGoal for passives)
-
 ### Medium Priority
 - [ ] Stonecutter recipes
 - [ ] Smithing recipes (trim/transform)
@@ -127,6 +142,8 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 - [ ] Conduit power
 - [ ] TNT explosives
 - [ ] Mob leashing
+- [ ] Trident projectiles
+- [ ] Full ambient sounds
 
 ---
 
@@ -135,4 +152,3 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 
 [Discord](https://discord.gg/MwChEHnAbh) | [GitCraft](https://github.com/WinPlay02/GitCraft) | [Fork from SteelMC](https://github.com/4lve/SteelMC)
 </div>
-
