@@ -42,7 +42,7 @@ pub use grindstone_menu::{GrindstoneMenu, GrindstoneMenuProvider};
 pub use hopper_menu::{HopperMenu, HopperMenuProvider};
 pub use lectern_menu::{LecternMenu, LecternMenuProvider};
 pub use loom_menu::{LoomMenu, LoomMenuProvider};
-pub use lock::SyncPlayerInv;
+pub use lock::{ContainerId, SyncPlayerInv};
 pub use menu_provider::{MenuInstance, MenuProvider};
 pub use merchant_menu::{MerchantMenu, MerchantMenuProvider};
 pub use shulker_box_menu::{ShulkerBoxMenu, ShulkerBoxMenuProvider};

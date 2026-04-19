@@ -8,6 +8,7 @@ mod container;
 mod decoration;
 mod farming;
 mod fluid;
+mod forestry;
 mod functional;
 mod portal;
 mod redstone;
@@ -22,6 +23,7 @@ pub use decoration::{
 };
 pub use farming::{CactusBlock, CactusFlowerBlock, CropBlock, FarmlandBlock};
 pub use fluid::LiquidBlock;
+pub use forestry::LeafBlock;
 pub use functional::{
     AnvilBlock, BeaconBlock, BellBlock, BrewingStandBlock, CartographyTableBlock, ComparatorBlock,
     CrafterBlock, FurnaceBlock, GrindstoneBlock, HopperBlock, JukeboxBlock, LoomBlock,

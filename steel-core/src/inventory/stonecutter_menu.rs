@@ -1,37 +1,46 @@
 //! The stonecutter menu for stone variants.
 //!
-//! Slot layout (37 total):
-//! - Slot 0: Input
-//! - Slot 1: Output selection
-//! - Slots 2-28: Output (result, virtual)
-//! - Slots 29-37: Main inventory + hotbar
+//! Slot layout:
+//! - Slot 0: Input (player inv slot 0)
+//! - Slot 1: Output
+//! - Slots 2-38: Player inventory + hotbar
 
 use std::mem;
+use std::sync::Arc;
 
-use steel_registry::item_stack::ItemStack;
-use steel_registry::menu_type::MenuTypeRef;
-use steel_registry::vanilla_menu_types;
+use steel_registry::{
+    item_stack::ItemStack,
+    menu_type::MenuTypeRef,
+    vanilla_menu_types,
+    REGISTRY,
+};
+use steel_utils::locks::SyncMutex;
 use steel_utils::{BlockPos, translations};
 use text_components::TextComponent;
 
 use crate::inventory::{
     SyncPlayerInv,
-    lock::{ContainerLockGuard, ContainerRef},
+    crafting::ResultContainer,
+    lock::{ContainerId, ContainerLockGuard},
     menu::{Menu, MenuBehavior},
     menu_provider::{MenuInstance, MenuProvider},
-    slot::{NormalSlot, Slot, SlotType, add_standard_inventory_slots},
+    slot::{NormalSlot, ResultSlot, Slot, SlotType},
 };
 use crate::player::Player;
 
+type SyncResultContainer = Arc<SyncMutex<ResultContainer>>;
+
 pub mod slots {
     pub const INPUT: usize = 0;
-    pub const INV_SLOT_START: usize = 1;
+    pub const OUTPUT: usize = 1;
+    pub const INV_SLOT_START: usize = 2;
     pub const TOTAL_SLOTS: usize = 40;
 }
 
 pub struct StonecutterMenu {
     behavior: MenuBehavior,
     block_pos: BlockPos,
+    result_container: SyncResultContainer,
 }
 
 impl StonecutterMenu {
@@ -39,11 +48,29 @@ impl StonecutterMenu {
     pub fn new(inventory: SyncPlayerInv, container_id: u8, block_pos: BlockPos) -> Self {
         let mut menu_slots = Vec::with_capacity(slots::TOTAL_SLOTS);
 
-        // Slot 0: Input
+        let result_container = Arc::new(SyncMutex::new(ResultContainer::new()));
+
+        // Slot 0: Input from player inventory (slot 0)
         menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 0)));
 
-        // Slots 1-39: Standard inventory
-        add_standard_inventory_slots(&mut menu_slots, &inventory);
+        // Slot 1: Output (result slot)
+        menu_slots.push(SlotType::Result(ResultSlot::new(
+            result_container.clone(),
+        )));
+
+        // Slots 2-37: Player hotbar (slots 1-9)
+        for i in 0..9 {
+            menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), i + 1)));
+        }
+
+        // Slots 38-39: Player offhand (slots 40-41)
+        menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 40)));
+        menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 41)));
+
+        // Additional player inventory slots (slots 9-35)
+        for i in 9..36 {
+            menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), i)));
+        }
 
         Self {
             behavior: MenuBehavior::new(
@@ -52,12 +79,32 @@ impl StonecutterMenu {
                 Some(&vanilla_menu_types::STONECUTTER),
             ),
             block_pos,
+            result_container,
         }
     }
 
     #[must_use]
     pub fn menu_type() -> MenuTypeRef {
         &vanilla_menu_types::STONECUTTER
+    }
+
+    fn update_result(&self, guard: &mut ContainerLockGuard, inventory: &SyncPlayerInv) {
+        let player_inv_id = ContainerId::from_arc(inventory);
+        let input = guard.get(player_inv_id)
+            .expect("player inventory not locked")
+            .get_item(0);
+
+        let result_stack = if input.is_empty() {
+            ItemStack::empty()
+        } else if let Some(recipe) = REGISTRY.recipes.find_stonecutter_recipe(input) {
+            recipe.assemble()
+        } else {
+            ItemStack::empty()
+        };
+
+        guard.get_mut(ContainerId::from_arc(&self.result_container))
+            .expect("result container not locked")
+            .set_item(0, result_stack);
     }
 }
 
@@ -74,7 +121,7 @@ impl Menu for StonecutterMenu {
         &mut self,
         guard: &mut ContainerLockGuard,
         slot_index: usize,
-        _player: &Player,
+        player: &Player,
     ) -> ItemStack {
         if slot_index >= self.behavior.slots.len() {
             return ItemStack::empty();
@@ -86,10 +133,27 @@ impl Menu for StonecutterMenu {
             return ItemStack::empty();
         }
 
+        // Handle output slot being taken
+        if slot_index == slots::OUTPUT {
+            if let Some(remainder) = slot.on_take(guard, &stack, player) {
+                player.add_item_or_drop_with_guard(guard, remainder);
+            }
+            // Update result after taking - get inventory from slot 0
+            let input_slot = &self.behavior.slots[slots::INPUT];
+            let refs = input_slot.all_container_refs();
+            for r in refs {
+                if let crate::inventory::lock::ContainerRef::PlayerInventory(inv) = r {
+                    self.update_result(guard, &inv);
+                    break;
+                }
+            }
+            return stack;
+        }
+
         let clicked = stack.clone();
         let mut stack_mut = stack;
 
-        let stonecutter_slots = 1;
+        let stonecutter_slots = 2;
         let total_slots = self.behavior.slots.len();
 
         let moved = if slot_index < stonecutter_slots {
@@ -103,6 +167,19 @@ impl Menu for StonecutterMenu {
         }
 
         self.behavior.slots[slot_index].set_item(guard, stack_mut.clone());
+
+        // Update result when input changes
+        if slot_index == slots::INPUT {
+            let input_slot = &self.behavior.slots[slots::INPUT];
+            let refs = input_slot.all_container_refs();
+            for r in refs {
+                if let crate::inventory::lock::ContainerRef::PlayerInventory(inv) = r {
+                    self.update_result(guard, &inv);
+                    break;
+                }
+            }
+        }
+
         if stack_mut.count == clicked.count {
             return ItemStack::empty();
         }

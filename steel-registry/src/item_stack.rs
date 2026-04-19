@@ -343,6 +343,11 @@ impl ItemStack {
         &self.patch
     }
 
+    /// Returns a mutable reference to the component patch.
+    pub fn patch_mut(&mut self) -> &mut DataComponentPatch {
+        &mut self.patch
+    }
+
     /// Gets the Tool component if present.
     #[must_use]
     pub fn get_tool(&self) -> Option<&Tool> {
@@ -474,10 +479,20 @@ impl ItemStack {
 
     /// Applies furnace smelting to convert this item (e.g., raw iron -> iron ingot).
     pub fn apply_furnace_smelt(&mut self) {
-        // TODO: Implement smelting recipe lookup
-        // 1. Look up this item in smelting recipes
-        // 2. If found, replace self.item with the result item
-        // Note: This changes the item type, not just components
+        if let Some(recipe) = crate::REGISTRY.recipes.find_furnace_recipe(self) {
+            if let Some(result) = recipe.apply(self) {
+                *self = result;
+            }
+        }
+    }
+
+    /// Applies campfire cooking to convert this item (e.g., beef -> cooked beef).
+    pub fn apply_campfire_smelt(&mut self) {
+        if let Some(recipe) = crate::REGISTRY.recipes.find_campfire_recipe(self) {
+            if let Some(result) = recipe.apply(self) {
+                *self = result;
+            }
+        }
     }
 
     /// Creates an exploration map pointing to a structure.

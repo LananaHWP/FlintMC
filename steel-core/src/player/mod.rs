@@ -28,6 +28,7 @@ pub mod player_inventory;
 pub mod profile_key;
 mod signature_cache;
 mod teleport_state;
+mod biome_sounds;
 
 pub use abilities::Abilities;
 use bitflags::bitflags;
@@ -339,6 +340,9 @@ pub struct Player {
 
     /// Player advancement data.
     pub advancement_data: SyncMutex<PlayerAdvancementData>,
+
+    /// Biome ambient sound state.
+    pub biome_ambient_state: SyncMutex<crate::player::biome_sounds::BiomeAmbientState>,
 }
 
 impl Player {
@@ -479,6 +483,7 @@ impl Player {
             chunk_send_epoch: AtomicU32::new(0),
             active_effects: SyncMutex::new(ActiveEffectMap::new()),
             advancement_data: SyncMutex::new(PlayerAdvancementData::new()),
+            biome_ambient_state: SyncMutex::new(biome_sounds::BiomeAmbientState::new()),
         }
     }
 
@@ -597,6 +602,10 @@ impl Player {
         self.update_pose();
         self.update_shared_flags();
         self.sync_entity_data();
+
+        if self.client_loaded.load(Ordering::Relaxed) {
+            biome_sounds::tick_biome_ambient(self, &world);
+        }
 
         {
             let health = *self.entity_data.lock().health.get();

@@ -250,6 +250,7 @@ impl ShapelessRecipe {
 pub enum CraftingRecipe {
     Shaped(&'static ShapedRecipe),
     Shapeless(&'static ShapelessRecipe),
+    Stonecutter(&'static super::stonecutter::StonecutterRecipe),
 }
 
 impl CraftingRecipe {
@@ -259,6 +260,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => &r.id,
             Self::Shapeless(r) => &r.id,
+            Self::Stonecutter(r) => &r.id,
         }
     }
 
@@ -268,6 +270,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => r.category,
             Self::Shapeless(r) => r.category,
+            Self::Stonecutter(_) => CraftingCategory::Building,
         }
     }
 
@@ -277,6 +280,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => &r.result,
             Self::Shapeless(r) => &r.result,
+            Self::Stonecutter(r) => &r.result,
         }
     }
 
@@ -287,6 +291,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => r.matches(input),
             Self::Shapeless(r) => r.matches(input),
+            Self::Stonecutter(_) => false,
         }
     }
 
@@ -296,6 +301,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => r.assemble(),
             Self::Shapeless(r) => r.assemble(),
+            Self::Stonecutter(r) => r.assemble(),
         }
     }
 
@@ -305,6 +311,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => r.get_remaining_items(input),
             Self::Shapeless(r) => r.get_remaining_items(input),
+            Self::Stonecutter(_) => Vec::new(),
         }
     }
 
@@ -314,6 +321,7 @@ impl CraftingRecipe {
         match self {
             Self::Shaped(r) => r.fits_in_2x2(),
             Self::Shapeless(r) => r.fits_in_2x2(),
+            Self::Stonecutter(_) => true,
         }
     }
 }

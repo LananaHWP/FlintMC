@@ -129,6 +129,9 @@ pub static BLOCK_BEHAVIORS: BlockBehaviorLock = BlockBehaviorLock(OnceLock::new(
 /// Access behaviors directly via deref: `ITEM_BEHAVIORS.get_behavior(item)`
 pub static ITEM_BEHAVIORS: ItemBehaviorLock = ItemBehaviorLock(OnceLock::new());
 
+use crate::behavior::blocks::LeafBlock;
+use steel_registry::vanilla_blocks;
+
 /// Initializes the global behavior registries.
 ///
 /// This should be called once after the main registry is frozen.
@@ -139,6 +142,19 @@ pub static ITEM_BEHAVIORS: ItemBehaviorLock = ItemBehaviorLock(OnceLock::new());
 pub fn init_behaviors() {
     let mut block_behaviors = BlockBehaviorRegistry::new();
     register_block_behaviors(&mut block_behaviors);
+
+    // Register leaf block decay behavior for all leaf variants
+    block_behaviors.set_behavior(&vanilla_blocks::OAK_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::SPRUCE_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::BIRCH_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::JUNGLE_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::ACACIA_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::CHERRY_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::DARK_OAK_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::MANGROVE_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::PALE_OAK_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::AZALEA_LEAVES, Box::new(LeafBlock));
+    block_behaviors.set_behavior(&vanilla_blocks::FLOWERING_AZALEA_LEAVES, Box::new(LeafBlock));
 
     assert!(
         BLOCK_BEHAVIORS.0.set(block_behaviors).is_ok(),

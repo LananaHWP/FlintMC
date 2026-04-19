@@ -1,42 +1,48 @@
 //! The smithing menu for upgrading items.
 //!
-//! Slot layout (39 total):
-//! - Slot 0: Input (item to upgrade)
-//! - Slot 1: Addition (material)
-//! - Slot 2: Output (result)
-//! - Slots 3-30: Main inventory (27 slots)
+//! Slot layout (40 total):
+//! - Slot 0: Template (armor trim template or upgrade template)
+//! - Slot 1: Base (armor piece or tool/weapon)
+//! - Slot 2: Addition (trim material or netherite ingot)
+//! - Slot 3: Output (result)
+//! - Slots 4-30: Main inventory (27 slots)
 //! - Slots 31-38: Hotbar (9 slots)
+//! - Slot 39: Offhand
 
 use std::mem;
+use std::sync::Arc;
 
-use steel_registry::item_stack::ItemStack;
-use steel_registry::menu_type::MenuTypeRef;
-use steel_registry::vanilla_menu_types;
+use steel_registry::{
+    item_stack::ItemStack,
+    menu_type::MenuTypeRef,
+    recipe::SmithingRecipeResult,
+    REGISTRY,
+    vanilla_menu_types,
+};
+use steel_utils::locks::SyncMutex;
 use steel_utils::{BlockPos, translations};
 use text_components::TextComponent;
 
 use crate::inventory::{
-    SyncPlayerInv,
     container::Container,
-    lock::{ContainerLockGuard, ContainerRef},
+    crafting::ResultContainer,
+    lock::{ContainerId, ContainerLockGuard, ContainerRef, SyncPlayerInv},
     menu::{Menu, MenuBehavior},
     menu_provider::{MenuInstance, MenuProvider},
-    slot::{NormalSlot, ResultSlot, Slot, SlotType, SyncResultContainer, add_standard_inventory_slots},
+    slot::{NormalSlot, ResultSlot, Slot, SlotType},
 };
 use crate::player::Player;
-use std::sync::Arc;
-use steel_utils::locks::SyncMutex;
-use crate::inventory::crafting::ResultContainer;
 
 /// Slot indices for the smithing menu.
 pub mod slots {
-    pub const INPUT: usize = 0;
-    pub const ADDITION: usize = 1;
-    pub const OUTPUT: usize = 2;
-    pub const INV_SLOT_START: usize = 3;
+    pub const TEMPLATE: usize = 0;
+    pub const BASE: usize = 1;
+    pub const ADDITION: usize = 2;
+    pub const OUTPUT: usize = 3;
+    pub const INV_SLOT_START: usize = 4;
     pub const INV_SLOT_END: usize = 31;
     pub const HOTBAR_SLOT_START: usize = 31;
-    pub const HOTBAR_SLOT_END: usize = 40;
+    pub const HOTBAR_SLOT_END: usize = 39;
     pub const TOTAL_SLOTS: usize = 40;
 }
 
@@ -49,6 +55,7 @@ pub struct SmithingMenu {
     behavior: MenuBehavior,
     result_container: SyncSmithingResultContainer,
     block_pos: BlockPos,
+    inventory: SyncPlayerInv,
 }
 
 impl SmithingMenu {
@@ -59,15 +66,22 @@ impl SmithingMenu {
         let result_container: SyncSmithingResultContainer =
             Arc::new(SyncMutex::new(ResultContainer::new()));
 
-        // Slots 0-1: Input and addition
+        // Slot 0: Template (trim template or upgrade template)
         menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 0)));
+
+        // Slot 1: Base (armor piece or tool)
         menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 1)));
 
-        // Slot 2: Output
+        // Slot 2: Addition (trim material or netherite ingot)
+        menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), 2)));
+
+        // Slot 3: Output
         menu_slots.push(SlotType::Result(ResultSlot::new(result_container.clone())));
 
-        // Slots 3-39: Standard inventory
-        add_standard_inventory_slots(&mut menu_slots, &inventory);
+        // Slots 4-37: Standard inventory (34 slots for 27 inv + 9 hotbar)
+        for i in 0..34 {
+            menu_slots.push(SlotType::Normal(NormalSlot::new(inventory.clone(), i + 3)));
+        }
 
         Self {
             behavior: MenuBehavior::new(
@@ -77,6 +91,7 @@ impl SmithingMenu {
             ),
             result_container,
             block_pos,
+            inventory,
         }
     }
 
@@ -88,6 +103,48 @@ impl SmithingMenu {
     #[must_use]
     pub const fn block_pos(&self) -> BlockPos {
         self.block_pos
+    }
+
+    fn update_result(&self, guard: &mut ContainerLockGuard) {
+        let player_inv_refs = self.behavior.slots[slots::TEMPLATE].all_container_refs();
+        let inventory = player_inv_refs.iter()
+            .find_map(|r| {
+                if let ContainerRef::PlayerInventory(inv) = r {
+                    Some(inv.clone())
+                } else {
+                    None
+                }
+            });
+
+        let inventory = match inventory {
+           Some(inv) => inv,
+            None => return,
+        };
+        let player_inv_id = ContainerId::from_arc(&inventory);
+
+        let template = guard.get(player_inv_id)
+            .expect("player inventory not locked")
+            .get_item(slots::TEMPLATE);
+
+        let base = guard.get(player_inv_id)
+            .expect("player inventory not locked")
+            .get_item(slots::BASE);
+
+        let addition = guard.get(player_inv_id)
+            .expect("player inventory not locked")
+            .get_item(slots::ADDITION);
+
+        let result_stack = if template.is_empty() || base.is_empty() || addition.is_empty() {
+            ItemStack::empty()
+        } else if let Some(recipe) = REGISTRY.recipes.find_smithing_recipe(template, base, addition) {
+            recipe.assemble(base, addition).unwrap_or_else(ItemStack::empty)
+        } else {
+            ItemStack::empty()
+        };
+
+        guard.get_mut(ContainerId::from_arc(&self.result_container))
+            .expect("result container not locked")
+            .set_item(0, result_stack);
     }
 }
 
@@ -116,10 +173,50 @@ impl Menu for SmithingMenu {
             return ItemStack::empty();
         }
 
+        // Handle output slot being taken
+        if slot_index == slots::OUTPUT {
+            let clicked = stack.clone();
+
+            // Consume inputs (1 each)
+            let player_inv_id = ContainerId::from_arc(&self.inventory);
+
+            // Decrement template
+            let template_slot = guard.get_mut(player_inv_id)
+                .expect("player inventory not locked")
+                .get_item_mut(slots::TEMPLATE);
+            template_slot.count = (template_slot.count - 1).max(0);
+            if template_slot.count == 0 {
+                *template_slot = ItemStack::empty();
+            }
+
+            // Decrement base
+            let base_slot = guard.get_mut(player_inv_id)
+                .expect("player inventory not locked")
+                .get_item_mut(slots::BASE);
+            base_slot.count = (base_slot.count - 1).max(0);
+            if base_slot.count == 0 {
+                *base_slot = ItemStack::empty();
+            }
+
+            // Decrement addition
+            let addition_slot = guard.get_mut(player_inv_id)
+                .expect("player inventory not locked")
+                .get_item_mut(slots::ADDITION);
+            addition_slot.count = (addition_slot.count - 1).max(0);
+            if addition_slot.count == 0 {
+                *addition_slot = ItemStack::empty();
+            }
+
+            // Re-check recipe after consuming
+            self.update_result(guard);
+
+            return clicked;
+        }
+
         let clicked = stack.clone();
         let mut stack_mut = stack;
 
-        let smithing_slots = 3;
+        let smithing_slots = 4;
         let total_slots = self.behavior.slots.len();
 
         let moved = if slot_index < smithing_slots {
@@ -133,6 +230,12 @@ impl Menu for SmithingMenu {
         }
 
         self.behavior.slots[slot_index].set_item(guard, stack_mut.clone());
+
+        // Update result when any input changes
+        if slot_index < slots::ADDITION {
+            self.update_result(guard);
+        }
+
         if stack_mut.count == clicked.count {
             return ItemStack::empty();
         }

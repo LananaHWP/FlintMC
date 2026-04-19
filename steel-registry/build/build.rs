@@ -29,6 +29,7 @@ mod item_tags;
 mod items;
 mod jukebox_songs;
 mod level_events;
+mod particles;
 mod loot_tables;
 mod menu_types;
 mod mob_effects;
@@ -120,6 +121,7 @@ const LOOT_TABLES: &str = "loot_tables";
 const BLOCK_ENTITY_TYPES: &str = "block_entity_types";
 const GAME_RULES: &str = "game_rules";
 const LEVEL_EVENTS: &str = "level_events";
+const PARTICLES: &str = "particles";
 const SOUND_EVENTS: &str = "sound_events";
 const SOUND_TYPES: &str = "sound_types";
 const MULTI_NOISE: &str = "multi_noise";
@@ -184,6 +186,7 @@ pub fn main() {
         (block_entity_types::build(), BLOCK_ENTITY_TYPES),
         (game_rules::build(), GAME_RULES),
         (level_events::build(), LEVEL_EVENTS),
+        (particles::build(), PARTICLES),
         (sound_events::build(), SOUND_EVENTS),
         (sound_types::build(), SOUND_TYPES),
         (world_clocks::build(), WORLD_CLOCKS),

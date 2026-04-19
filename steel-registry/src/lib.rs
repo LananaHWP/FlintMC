@@ -343,6 +343,11 @@ pub mod level_events;
 
 #[expect(warnings)]
 #[rustfmt::skip]
+#[path = "generated/vanilla_particles.rs"]
+pub mod particles;
+
+#[expect(warnings)]
+#[rustfmt::skip]
 #[path = "generated/vanilla_sound_events.rs"]
 pub mod sound_events;
 

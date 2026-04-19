@@ -286,6 +286,12 @@ impl World {
         self.level_data.read().data().world_border().clone()
     }
 
+    #[inline]
+    #[must_use]
+    pub fn get_world_tick(&self) -> u64 {
+        self.level_data.read().data().game_time as u64
+    }
+
     /// Checks if a position is within the world border.
     #[inline]
     #[must_use]
