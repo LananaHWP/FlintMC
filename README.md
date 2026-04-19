@@ -103,12 +103,12 @@ It focuses on clean code, performance, extensibility, and full vanilla parity.
 ## TODO (Not Yet Implemented)
 
 ### High Priority
-- [ ] Potion Effects system (framework exists, needs full implementation)
+- [x] Potion Effects system (framework + status effects)
 - [x] Fire spread mechanics
 - [ ] Enchantment application
 - [ ] Projectiles (arrows, fireballs, tridents)
 - [ ] Advancements system
-- [ ] Mob breeding
+- [x] Mob breeding (BreedGoal for passives)
 
 ### Medium Priority
 - [ ] Stonecutter recipes
