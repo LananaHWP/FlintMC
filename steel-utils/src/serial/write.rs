@@ -188,6 +188,12 @@ impl WriteTo for NbtCompound {
 #[derive(Debug, Clone)]
 pub struct OptionalNbt(pub Option<NbtCompound>);
 
+impl WriteTo for String {
+    fn write(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        writer.write_all(self.as_bytes())
+    }
+}
+
 impl WriteTo for OptionalNbt {
     fn write(&self, writer: &mut impl Write) -> Result<()> {
         match &self.0 {

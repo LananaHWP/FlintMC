@@ -476,7 +476,7 @@ fn spawn_passive_mobs(self: &Arc<Self>, center_chunk: ChunkPos) {
 entries.first()
     }
 
-    fn spawn_mob_at(self: &Arc<Self>, entity_type: &str, pos: DVec3) {
+    pub fn spawn_mob_at(self: &Arc<Self>, entity_type: &str, pos: DVec3) {
         let name = if entity_type.contains(':') {
             &entity_type[9..]
         } else {

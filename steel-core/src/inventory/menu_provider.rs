@@ -4,6 +4,8 @@ use steel_registry::menu_type::MenuTypeRef;
 use text_components::TextComponent;
 
 use crate::inventory::menu::Menu;
+use crate::player::Player;
+use crate::inventory::lock::ContainerLockGuard;
 
 /// Trait for menu instances that can be opened by players.
 ///
@@ -15,6 +17,12 @@ pub trait MenuInstance: Menu + Send + Sync {
 
     /// Returns the container ID for this menu.
     fn container_id(&self) -> u8;
+
+    /// Handles a button click in this menu.
+    /// Returns true if the click was handled and changes were made.
+    fn on_button_click(&mut self, _player: &Player, _guard: &mut ContainerLockGuard, _button_id: i32) -> bool {
+        false
+    }
 }
 
 /// Trait for types that can create menus.

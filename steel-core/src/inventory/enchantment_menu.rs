@@ -14,9 +14,10 @@ use steel_utils::BlockPos;
 use steel_utils::translations;
 use text_components::TextComponent;
 
+use crate::enchantment_effects::{EnchantmentOption, is_enchantable};
 use crate::inventory::{
     SyncPlayerInv,
-    lock::{ContainerLockGuard, ContainerRef},
+    lock::ContainerLockGuard,
     menu::{Menu, MenuBehavior},
     menu_provider::{MenuInstance, MenuProvider},
     slot::{NormalSlot, Slot, SlotType, add_standard_inventory_slots},
@@ -47,6 +48,8 @@ pub struct EnchantmentMenu {
     block_pos: BlockPos,
     /// Enchantment power level.
     pub power: i32,
+    /// Options available for the current item (cached).
+    options: Vec<EnchantmentOption>,
 }
 
 impl EnchantmentMenu {
@@ -69,7 +72,76 @@ impl EnchantmentMenu {
             ),
             block_pos,
             power,
+            options: Vec::new(),
         }
+    }
+
+    /// Handles a button click in the enchanting menu.
+    /// Buttons 0, 1, 2 correspond to the three enchantment options.
+    pub fn click_button(&mut self, player: &Player, guard: &mut ContainerLockGuard, button_id: i32) -> bool {
+        if button_id < 0 || button_id >= self.options.len() as i32 {
+            return false;
+        }
+
+        let slot = &mut self.behavior.slots[slots::ENCHANT_SLOT];
+        let item = slot.get_item(guard).clone();
+
+        if item.is_empty() {
+            return false;
+        }
+
+        let option = &self.options[button_id as usize];
+
+        let player_exp = player.experience.lock();
+        let available_xp = player_exp.level();
+        drop(player_exp);
+
+        if available_xp < option.cost {
+            return false;
+        }
+
+        let mut mutable_item = item.clone();
+        let enchantment_key = option.enchantment.key.clone();
+        let level = option.level as u32;
+
+        mutable_item.upgrade_enchantment(enchantment_key, level);
+
+        slot.set_item(guard, mutable_item);
+
+        let mut player_exp = player.experience.lock();
+        player_exp.add_levels(-option.cost);
+        drop(player_exp);
+
+        self.options.clear();
+
+        true
+    }
+
+    /// Updates the available enchantment options for the item in slot 0.
+    pub fn update_options(&mut self, player: &Player, guard: &mut ContainerLockGuard) {
+        let slot = &self.behavior.slots[slots::ENCHANT_SLOT];
+        let item = slot.get_item(guard).clone();
+
+        if item.is_empty() {
+            self.options.clear();
+            return;
+        }
+
+        if !is_enchantable(&item) {
+            self.options.clear();
+            return;
+        }
+
+        let player_exp = player.experience.lock();
+        let xp_level = player_exp.level();
+        drop(player_exp);
+
+        if xp_level < 1 {
+            self.options.clear();
+            return;
+        }
+
+        self.options = crate::enchantment_effects::get_enchantment_options(&item, xp_level);
     }
 
     #[must_use]
@@ -158,6 +230,16 @@ impl MenuInstance for EnchantmentMenu {
 
     fn container_id(&self) -> u8 {
         self.behavior.container_id
+    }
+
+    fn on_button_click(&mut self, player: &Player, guard: &mut ContainerLockGuard, button_id: i32) -> bool {
+        self.click_button(player, guard, button_id)
+    }
+}
+
+impl EnchantmentMenu {
+    pub fn options(&self) -> &[EnchantmentOption] {
+        &self.options
     }
 }
 

@@ -5,7 +5,7 @@
 //! registered in the entity registry.
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use crossbeam::atomic::AtomicCell;
 use glam::DVec3;
@@ -190,6 +190,14 @@ impl Entity for MobEntity {
 
     fn set_on_ground(&self, on_ground: bool) {
         self.on_ground.store(on_ground, Ordering::Relaxed);
+    }
+
+    fn as_living(self: Arc<Self>) -> Option<Arc<dyn crate::entity::LivingEntity>> where Self: Sized {
+        Some(self)
+    }
+
+    fn as_living_ref(&self) -> Option<&dyn crate::entity::LivingEntity> {
+        Some(self)
     }
 
     fn hurt(&self, _source: &DamageSource, amount: f32) -> bool {

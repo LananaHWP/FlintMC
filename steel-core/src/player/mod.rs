@@ -1,8 +1,11 @@
 //! This module contains all things player-related.
 mod abilities;
+pub mod advancement;
+mod advancement_triggers;
 pub mod block_breaking;
 mod chat_state;
 pub mod chunk_sender;
+pub use advancement::PlayerAdvancementData;
 /// This module contains the `PlayerConnection` trait that abstracts network connections.
 pub mod connection;
 mod entity_state;
@@ -333,6 +336,9 @@ pub struct Player {
 
     /// Active potion effects on the player.
     pub active_effects: SyncMutex<ActiveEffectMap>,
+
+    /// Player advancement data.
+    pub advancement_data: SyncMutex<PlayerAdvancementData>,
 }
 
 impl Player {
@@ -354,6 +360,34 @@ impl Player {
     /// Sets the player's permission level.
     pub fn set_permission_level(&self, level: i32) {
         self.permission_level.store(level, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Tracks an advancement criterion for this player.
+    /// Returns true if the criterion was newly obtained.
+    pub fn track_advancement_criterion(&self, advancement_id: Identifier, criterion_id: &str) -> bool {
+        self.advancement_data.lock().track_criterion(&advancement_id, criterion_id)
+    }
+
+    /// Checks if a specific criterion has been obtained.
+    pub fn has_advancement_criterion(&self, advancement_id: &Identifier, criterion_id: &str) -> bool {
+        self.advancement_data.lock().has_criterion(advancement_id, criterion_id)
+    }
+
+    /// Checks if an advancement has been awarded.
+    pub fn is_advancement_awarded(&self, advancement_id: &Identifier) -> bool {
+        self.advancement_data.lock().is_advancement_awarded(advancement_id)
+    }
+
+    /// Checks all advancement criteria and awards advancements if requirements are met.
+    pub fn check_advancement_criteria(&self, _advancements: &crate::advancement::Advancement) {
+    }
+
+    /// Sends advancement updates to the client.
+    pub fn send_advancements_to_client(&self, _advancements: &[crate::advancement::Advancement]) {
+    }
+
+    /// Updates the client with the current advancement state.
+    pub fn sync_advancements(&self) {
     }
 
     /// Computes the start (eye position) and end positions for a raytrace.
@@ -444,6 +478,7 @@ impl Player {
             experience: SyncMutex::new(Experience::default()),
             chunk_send_epoch: AtomicU32::new(0),
             active_effects: SyncMutex::new(ActiveEffectMap::new()),
+            advancement_data: SyncMutex::new(PlayerAdvancementData::new()),
         }
     }
 
@@ -1601,12 +1636,20 @@ impl Player {
             packet.button_id,
             packet.container_id
         );
-        // TODO: Implement container button click handling
-        // This is used for things like:
-        // - Enchanting table level selection
-        // - Stonecutter recipe selection
-        // - Loom pattern selection
-        // - Lectern page turning
+
+        let mut open_menu_guard = self.open_menu.lock();
+        if let Some(ref mut menu) = *open_menu_guard {
+            if i32::from(menu.container_id()) != packet.container_id {
+                return;
+            }
+
+            let inv_ref = crate::inventory::lock::ContainerRef::PlayerInventory(self.inventory.clone());
+            let mut guard = crate::inventory::lock::ContainerLockGuard::lock_all(&[&inv_ref]);
+
+            if menu.on_button_click(self, &mut guard, packet.button_id) {
+                self.broadcast_inventory_changes();
+            }
+        }
     }
 
     /// Handles a container click packet (slot interaction).

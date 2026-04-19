@@ -10,7 +10,7 @@ use steel_registry::{REGISTRY, RegistryEntry};
 use steel_registry::{RegistryExt, vanilla_entities};
 use uuid::Uuid;
 
-use super::entities::{BlockDisplayEntity, ItemEntity};
+use super::entities::{ArrowEntity, BlockDisplayEntity, ItemEntity};
 use super::{SharedEntity, next_entity_id};
 use crate::world::World;
 
@@ -209,6 +209,17 @@ pub fn init_entities() {
             Arc::new(ItemEntity::from_saved(
                 id, pos, uuid, velocity, rotation, on_ground, world,
             ))
+        },
+    );
+
+    // Register arrow entity factory
+    registry.register(&vanilla_entities::ARROW, |id, pos, world| {
+        Arc::new(ArrowEntity::new(id, pos, world))
+    });
+    registry.register_load(
+        &vanilla_entities::ARROW,
+        |id, pos, uuid, velocity, _rotation, _on_ground, world| {
+            Arc::new(ArrowEntity::from_saved(id, pos, uuid, velocity, (0.0, 0.0), false, world))
         },
     );
 

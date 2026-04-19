@@ -1,6 +1,7 @@
 mod c_add_entity;
 mod c_animate;
 mod c_block_changed_ack;
+mod c_update_advancements;
 mod c_block_destruction;
 mod c_block_entity_data;
 mod c_block_event;
@@ -154,6 +155,10 @@ pub use c_tab_list::CTabList;
 pub use c_take_item_entity::CTakeItemEntity;
 pub use c_ticking_state::CTickingState;
 pub use c_ticking_step::CTickingStep;
+pub use c_update_advancements::{
+    AdvancementAction, AdvancementFrame, CAdvancement, CAdvancementCriterion, CAdvancementDisplay,
+    CAdvancementIcon, CUpdateAdvancements,
+};
 pub use c_update_attributes::{
     AttributeModifierData, AttributeModifierOperation, AttributeSnapshot, CUpdateAttributes,
 };

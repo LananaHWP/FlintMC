@@ -299,6 +299,9 @@ impl Goal for FollowParentGoal {
 pub struct BreedGoal {
     speed_multiplier: f32,
     partner_distance: f64,
+    partner: Option<SharedEntity>,
+    blocked: bool,
+    ticks_since_spawn_check: i32,
 }
 
 impl BreedGoal {
@@ -306,19 +309,149 @@ impl BreedGoal {
         Self {
             speed_multiplier: speed,
             partner_distance: 9.0,
+            partner: None,
+            blocked: false,
+            ticks_since_spawn_check: 0,
         }
     }
 }
 
-impl Goal for BreedGoal {
-    fn tick(&mut self, _entity: &dyn LivingEntity) {}
+impl BreedGoal {
+    fn find_partner(&mut self, entity: &dyn LivingEntity) -> bool {
+        let entity_pos = entity.position();
+        let Some(world) = entity.level() else {
+            return false;
+        };
+        let block_pos = steel_utils::BlockPos::new(entity_pos.x as i32, entity_pos.y as i32, entity_pos.z as i32);
+        let nearby = world.get_nearby_entities(block_pos, 9);
 
-    fn can_use(&self, _entity: &dyn LivingEntity) -> bool {
+        let entity_type_key = entity.entity_type().key.clone();
+
+        for e in nearby {
+            if e.id() == entity.id() {
+                continue;
+            }
+
+            if e.entity_type().key != entity_type_key {
+                continue;
+            }
+
+            if let Some(other_living) = e.as_living_ref() {
+                let living_base = other_living.living_base();
+                let base = living_base.lock();
+
+                if base.is_in_love_mode() && base.is_adult() {
+                    let my_base = entity.living_base().lock();
+                    if my_base.is_in_love_mode() {
+                        self.partner = Some(e.clone());
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn spawn_baby(&mut self, entity: &dyn LivingEntity) {
+        let Some(partner) = self.partner.clone() else {
+            return;
+        };
+        let Some(world) = entity.level() else {
+            return;
+        };
+
+        let entity_type_key = entity.entity_type().key.clone();
+        let baby_type = format!("minecraft:{}", entity_type_key.path);
+
+        let pos = entity.position();
+        let baby_pos = glam::DVec3::new(pos.x, pos.y, pos.z);
+
+        world.spawn_mob_at(&baby_type, baby_pos);
+
+        let mut entity_base = entity.living_base().lock();
+        entity_base.set_love_mode(-1, None);
+        drop(entity_base);
+
+        if let Some(partner_living) = partner.as_living_ref() {
+            let mut partner_base = partner_living.living_base().lock();
+            partner_base.set_love_mode(-1, None);
+        }
+
+        self.partner = None;
+        self.blocked = false;
+    }
+}
+
+impl Goal for BreedGoal {
+    fn tick(&mut self, entity: &dyn LivingEntity) {
+        let living_base = entity.living_base();
+        let base = living_base.lock();
+
+        if !base.is_in_love_mode() {
+            return;
+        }
+        drop(base);
+
+        if self.partner.is_none() {
+            if !self.find_partner(entity) {
+                return;
+            }
+        }
+
+        let Some(part) = self.partner.clone() else {
+            return;
+        };
+
+        let mob_pos = entity.position();
+        let partner_pos = part.position();
+        let dist = mob_pos.distance(partner_pos);
+
+        if dist < self.partner_distance {
+            self.spawn_baby(entity);
+            return;
+        }
+
+        let speed = entity.get_speed() * self.speed_multiplier;
+        let direction = partner_pos - mob_pos;
+        let dist = direction.length();
+
+        if dist > 0.1 {
+            let dx = direction.x / dist * f64::from(speed);
+            let dz = direction.z / dist * f64::from(speed);
+
+            let current_vel = entity.velocity();
+            entity.set_velocity(glam::DVec3::new(dx, current_vel.y, dz));
+        }
+    }
+
+    fn can_use(&self, entity: &dyn LivingEntity) -> bool {
+        let base = entity.living_base().lock();
+
+        if !base.is_adult() {
+            return false;
+        }
+
+        if !base.is_in_love_mode() {
+            return false;
+        }
+
         true
     }
 
     fn get_priority(&self) -> i32 {
         3
+    }
+
+    fn start(&mut self, _entity: &dyn LivingEntity) {
+        self.partner = None;
+        self.blocked = false;
+        self.ticks_since_spawn_check = 0;
+    }
+
+    fn stop(&mut self, _entity: &dyn LivingEntity) {
+        self.partner = None;
+        self.blocked = false;
     }
 }
 

@@ -4,12 +4,14 @@
 
 use crate::chunk::chunk_map::ChunkMap;
 
+pub mod advancement;
 pub mod behavior;
 pub mod block_entity;
 pub mod chunk;
 pub mod chunk_saver;
 pub mod command;
 pub mod config;
+pub mod enchantment_effects;
 pub mod entity;
 pub mod fluid;
 pub mod inventory;

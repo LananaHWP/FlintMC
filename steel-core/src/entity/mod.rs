@@ -186,6 +186,19 @@ pub trait Entity: Send + Sync {
         None
     }
 
+/// Gets the entity as a `LivingEntity` if it is one.
+    fn as_living(self: Arc<Self>) -> Option<Arc<dyn LivingEntity>> where Self: Sized {
+        None
+    }
+
+    /// Tries to get this entity as a `LivingEntity` reference.
+    ///
+    /// This is useful when you have an `Arc<dyn Entity>` and need to check
+    /// if it also implements `LivingEntity` without consuming the Arc.
+    fn as_living_ref(&self) -> Option<&dyn LivingEntity> {
+        None
+    }
+
     /// Gets the entity's rotation as (yaw, pitch) in degrees.
     ///
     /// Yaw is horizontal rotation (0-360), pitch is vertical (-90 to 90).
